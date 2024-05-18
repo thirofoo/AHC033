@@ -1,7 +1,7 @@
 use proconio::*;
 use rand::prelude::*;
 use itertools::Itertools;
-use std::{cmp::Reverse, collections::BinaryHeap, process::exit};
+use std::{cmp::Reverse, collections::VecDeque};
 
 pub fn get_time() -> f64 {
     static mut STIME: f64 = -1.0;
@@ -59,26 +59,49 @@ impl Input {
 struct Terminal {
     h: usize,
     w: usize,
-    grid: Vec<Vec<Vec<i64>>>,
+    grid_container: Vec<Vec<Vec<i64>>>,
+    container_grid: Vec<(usize, usize, usize)>,
     containers: Vec<Vec<i64>>,
     container_idx: Vec<usize>,
-    cranes_place: Vec<Vec<isize>>,
+    grid_crane: Vec<Vec<isize>>,
+    crane_grid: Vec<(usize, usize)>,
+    next_container: Vec<usize>,
 }
 
 impl Terminal {
-    fn new(h: usize, w: usize, containers: Vec<Vec<i64>>) -> Self {
-        let grid: Vec<Vec<Vec<i64>>> = vec![vec![vec![-1; 2]; w]; h];
-        let container_idx: Vec<usize> = vec![0; h];
-        let mut cranes_place: Vec<Vec<isize>> = vec![vec![-1; w]; h];
-        Self { h, w, grid, containers, container_idx, cranes_place }
+    fn new(input: &Input) -> Self {
+        let mut _next_container: Vec<usize> = vec![0; input.n];
+        for (i, crane) in _next_container.iter_mut().enumerate() {
+            *crane = i * input.n;
+        }
+        Self {
+            h: input.n,
+            w: input.n,
+            grid_container: vec![vec![vec![-1; 2]; input.n]; input.n],
+            container_grid: vec![(input.n, input.n, input.n); input.n * input.n],
+            containers: input.a.to_vec(),
+            container_idx: vec![0; input.n],
+            grid_crane: vec![vec![-1; input.n]; input.n],
+            crane_grid: vec![(input.n, input.n); input.n],
+            next_container: _next_container,
+        }
     }
 
-    fn expand_container(&mut self) {
-        /* 盤面の左端が空きの場合にコンテナを展開する関数 */
+    fn prepare_container(&mut self) {
+        /* 盤面の左端・右端のコンテナを展開・搬出する関数 */
         for i in 0..self.h {
-            if self.grid[i][0][0] == -1 && self.container_idx[i] < self.containers.len() {
-                self.grid[i][0][0] = self.containers[i][self.container_idx[i]];
+            /* 展開 */
+            if self.grid_container[i][0][0] == -1 && self.container_idx[i] < self.containers.len() {
+                self.grid_container[i][0][0] = self.containers[i][self.container_idx[i]];
+                self.container_grid[i] = (i, 0, 0);
                 self.container_idx[i] += 1;
+            }
+            /* 搬出 */
+            if self.grid_container[i][self.w-1][0] != -1 {
+                let container_idx = self.grid_container[i][self.w-1][0];
+                self.grid_container[i][self.w-1][0] = -1;
+                self.container_grid[container_idx as usize] = (self.h, self.w, 0);
+                self.next_container[(container_idx / self.h as i64) as usize] += 1;
             }
         }
     }
@@ -96,17 +119,26 @@ struct Crane {
 }
 
 impl Crane {
-    fn new(h: usize, w: usize, x: usize, y: usize, idx: usize, big: bool, terminal: &mut Terminal) -> Self {
-        assert!(terminal.cranes_place[x][y] == -1);
-        terminal.cranes_place[x][y] = idx as isize;
-        Self { h, w, x, y, idx, suspended: false, big, exploded: false }
+    fn new(input: &Input, _idx: usize, _x: usize, _y: usize, _big: bool, terminal: &mut Terminal) -> Self {
+        assert!(terminal.grid_crane[_x][_y] == -1);
+        terminal.grid_crane[_x][_y] = _idx as isize;
+        terminal.crane_grid[_idx] = (_x, _y);
+        Self {
+            h: input.n,
+            w: input.n,
+            x: _x,
+            y: _y,
+            idx: _idx,
+            suspended: false,
+            big: _big,
+            exploded: false,
+        }
     }
 
     fn shift(&mut self, dir: usize, terminal: &mut Terminal) -> char {
         assert!(!self.exploded);
         let nx = self.x as isize + DX[dir];
         let ny = self.y as isize + DY[dir];
-        eprintln!("nx: {}, ny: {}", nx, ny);
 
         /* 場外に出ていないかを確認 */
         assert!(!out_field(nx, ny, self.h as isize, self.w as isize));
@@ -114,18 +146,26 @@ impl Crane {
         let ny = ny as usize;
 
         /* 隣にクレーンが無いことを確認 */
-        assert!(terminal.cranes_place[nx][ny] == -1);
+        assert!(terminal.grid_crane[nx][ny] == -1);
 
         /* suspend している場合に移動先にコンテナが無いかを確認 */
         if self.suspended {
-            assert!(terminal.grid[nx][ny][self.big as usize] == -1);
+            assert!(terminal.grid_container[nx][ny][self.big as usize] == -1);
         }
 
-        terminal.cranes_place[nx][ny] = terminal.cranes_place[self.x][self.y];
-        terminal.cranes_place[self.x][self.y] = -1;
+        terminal.grid_crane[nx][ny] = self.idx as isize;
+        terminal.grid_crane[self.x][self.y] = -1;
+        terminal.crane_grid[self.idx] = (nx, ny);
+
         if self.suspended {
-            terminal.grid[nx][ny][self.big as usize] = terminal.grid[self.x][self.y][self.big as usize];
-            terminal.grid[self.x][self.y][self.big as usize] = -1;
+            let container_idx = terminal.grid_container[self.x][self.y][self.big as usize];
+            terminal.grid_container[nx][ny][self.big as usize] = container_idx;
+            terminal.grid_container[self.x][self.y][self.big as usize] = -1;
+            terminal.container_grid[container_idx as usize] = (nx, ny, self.big as usize);
+        }
+
+        if self.x == 0 {
+            terminal.prepare_container();
         }
 
         self.x = nx;
@@ -138,8 +178,10 @@ impl Crane {
         assert!(!self.suspended);
         self.suspended = true;
         if self.big {
-            terminal.grid[self.x][self.y][1] = terminal.grid[self.x][self.y][0];
-            terminal.grid[self.x][self.y][0] = -1;
+            let container_idx = terminal.grid_container[self.x][self.y][0];
+            terminal.grid_container[self.x][self.y][1] = container_idx;
+            terminal.grid_container[self.x][self.y][0] = -1;
+            terminal.container_grid[container_idx as usize] = (self.x, self.y, 1);
         }
         'P'
     }
@@ -149,8 +191,10 @@ impl Crane {
         assert!(self.suspended);
         self.suspended = false;
         if self.big {
-            terminal.grid[self.x][self.y][0] = terminal.grid[self.x][self.y][1];
-            terminal.grid[self.x][self.y][1] = -1;
+            let container_idx = terminal.grid_container[self.x][self.y][1];
+            terminal.grid_container[self.x][self.y][0] = container_idx;
+            terminal.grid_container[self.x][self.y][1] = -1;
+            terminal.container_grid[container_idx as usize] = (self.x, self.y, 0);
         }
         'Q'
     }
@@ -162,11 +206,81 @@ impl Crane {
     fn explode(&mut self, terminal: &mut Terminal) -> char {
         assert!(!self.exploded);
         self.exploded = true;
-        terminal.grid[self.x][self.y][0] = -1;
-        terminal.grid[self.x][self.y][1] = -1;
-        terminal.cranes_place[self.x][self.y] = -1;
-        terminal.cranes_place[self.x][self.y] = -1;
+        terminal.grid_crane[self.x][self.y] = -1;
+        terminal.grid_crane[self.x][self.y] = -1;
         'X'
+    }
+
+    fn move_crane(
+        &mut self,
+        goal: (usize, usize),
+        terminal: &mut Terminal,
+    ) -> String {
+        /* BFS と経路復元で Crane を目的地まで動かす関数 */
+        let mut res: String = "".to_string();
+
+        /* queue を用意 */
+        let mut queue: VecDeque<(usize, usize, usize)> = VecDeque::new();
+        queue.push_back((self.x, self.y, 0));
+        let mut dis: Vec<Vec<usize>> = vec![vec![std::usize::MAX; terminal.w]; terminal.h];
+
+        while !queue.is_empty() {
+            let (x, y, d) = queue.pop_front().unwrap();
+            if (x, y) == goal {
+                dis[x][y] = d;
+                break;
+            }
+            if dis[x][y] != std::usize::MAX {
+                continue;
+            }
+            dis[x][y] = d;
+            for dir in 0..DIR_NUM {
+                let nx = x as isize + DX[dir];
+                let ny = y as isize + DY[dir];
+                if out_field(nx, ny, terminal.h as isize, terminal.w as isize) {
+                    continue;
+                }
+                let nx = nx as usize;
+                let ny = ny as usize;
+                if terminal.grid_crane[nx][ny] != -1 || dis[nx][ny] != std::usize::MAX {
+                    continue;
+                }
+                /* small の時はコンテナがある場所には移動できない */
+                if !self.big && terminal.grid_container[nx][ny][0] != -1 {
+                    continue;
+                }
+                queue.push_back((nx, ny, d + 1));
+            }
+        }
+        /* 経路復元 */
+        eprintln!("dis: {:?}", dis);
+        let mut x = goal.0;
+        let mut y = goal.1;
+        let mut d = dis[x][y];
+        let mut dirs: Vec<usize> = vec![];
+        while d > 0 {
+            for dir in 0..DIR_NUM {
+                let nx = x as isize + DX[dir];
+                let ny = y as isize + DY[dir];
+                if out_field(nx, ny, terminal.h as isize, terminal.w as isize) {
+                    continue;
+                }
+                let nx = nx as usize;
+                let ny = ny as usize;
+                if dis[nx][ny] == d - 1 {
+                    dirs.push((dir+2)%DIR_NUM);
+                    x = nx;
+                    y = ny;
+                    d -= 1;
+                    break;
+                }
+            }
+        }
+        dirs = dirs.into_iter().rev().collect();
+        for dir in dirs {
+            res.push(self.shift(dir, terminal));
+        }
+        res
     }
 }
 
@@ -190,6 +304,16 @@ impl Action {
     fn push(&mut self, idx: usize, step: char) {
         self.log[idx].push(step);
     }
+
+    fn balance(&mut self) {
+        /* 一番手数が多いクレーンに合わせて stop して均す関数 */
+        let max_len = self.log.iter().map(|x| x.len()).max().unwrap();
+        for i in 0..self.log.len() {
+            while self.log[i].len() < max_len {
+                self.log[i].push('.');
+            }
+        }
+    }
 }
 
 fn main() {
@@ -199,24 +323,20 @@ fn main() {
     2. 小クレーンを右端に移動
     3. 大クレーンで今現在正しく運び出せるコンテナを右端に移動
       - この時、小クレーンが邪魔になる場合は、右端の上下で上手く移動させる
-    4. 4, 9, 14, 19 のコンテナが場にある場合は、空きマスと大クレーンを用いて小クレーンの前に移動させる
-    5. 小クレーンの前に 4, 9, 14, 19 のコンテナがある場合は、小クレーンに吊り下げる
-    6. 大クレーンで右端に詰める
-    7. 4, 9, 14, 19 以外のコンテナが積み終わるまで 3 ~ 6 を繰り返す
+    4. 大クレーンで右端に詰める
+    5. 各搬出口の最後以外のコンテナが積み終わるまで 3, 4 を繰り返す
     */
 
     let input = Input::read_input();
-    let mut terminal = Terminal::new(input.n, input.n, input.a);
-    terminal.expand_container();
+    let mut terminal = Terminal::new(&input);
+    terminal.prepare_container();
+
     let mut cranes: Vec<Crane> = vec![];
     for i in 0..input.n {
         let big = i == 0;
-        cranes.push(Crane::new(input.n, input.n, i, 0, i, big, &mut terminal));
+        cranes.push(Crane::new(&input, i, i, 0, big, &mut terminal));
     }
     let mut actions = Action::new(input.n);
-
-    eprintln!("terminal.container_idx: {:?}", terminal.container_idx);
-    eprintln!("terminal.cranes_place: {:?}", terminal.cranes_place);
 
     /* 1. 20 マス分コンテナを展開する */
     for y in (1..input.n-1).rev() {
@@ -226,16 +346,133 @@ fn main() {
                 actions.push(i, crane.shift(Direction::Right as usize, &mut terminal));
             }
             actions.push(i, crane.lower(&mut terminal));
-
-            if y == 1 {
-                /* 最後は左端に戻らなくてよい */
-                break;
-            }
             for _ in 0..y {
                 actions.push(i, crane.shift(Direction::Left as usize, &mut terminal));
             }
         }
     }
-    
+
+    /* 2. 小クレーンを右端に移動 */
+    for (i, crane) in cranes.iter_mut().enumerate() {
+        while crane.y < input.n - 1 {
+            actions.push(i, crane.shift(Direction::Right as usize, &mut terminal));
+        }
+    }
+
+    let mut carried = 0;
+    loop {
+        loop {
+            /* 3. 大クレーンで今現在正しく運び出せるコンテナを右端に移動 */
+            let mut point: (i32, i32) = (-1, -1);
+            let mut goal: (i32, i32) = (-1, -1);
+            for i in 0..input.n {
+                for j in 0..input.n {
+                    for (k, container) in terminal.next_container.iter().enumerate() {
+                        if *container >= (k+1) * input.n {
+                            continue;
+                        }
+                        if terminal.grid_container[i][j][0] == *container as i64 {
+                            point = (i as i32, j as i32);
+                            goal = (k as i32, input.n as i32 - 1);
+                        }
+                    }
+                }
+            }
+            if point == (-1, -1) {
+                break;
+            }
+            let point = (point.0 as usize, point.1 as usize);
+            let goal = (goal.0 as usize, goal.1 as usize);
+            eprintln!("point: {:?}, goal: {:?}", point, goal);
+            
+            /* 目的コンテナまで移動 */
+            let trace: String = cranes[0].move_crane(point, &mut terminal);
+            for step in trace.chars() {
+                actions.push(0, step);
+            }
+            actions.push(0, cranes[0].suspend(&mut terminal));
+            actions.balance();
+
+            eprintln!("terminal.grid_container: {:?}", terminal.grid_container);
+            eprintln!("terminal.container_grid: {:?}", terminal.container_grid);
+            eprintln!("terminal.grid_crane: {:?}", terminal.grid_crane);
+            eprintln!("terminal.crane_grid: {:?}\n", terminal.crane_grid);
+
+            /* 搬出口手前にクレーンがある場合にどける */
+            let mut empty_point = (0, 0);
+            for i in 0..input.n {
+                if terminal.grid_crane[i][input.n - 1] == -1 {
+                    empty_point = (i, input.n - 1);
+                    break;
+                }
+            }
+            eprintln!("empty_point: {:?}", empty_point);
+
+            match goal.0.cmp(&empty_point.0) {
+                std::cmp::Ordering::Less => {
+                    for i in (goal.0+1..empty_point.0+1).rev() {
+                        actions.push(i, cranes[i].shift(Direction::Down as usize, &mut terminal));   
+                    }
+                },
+                std::cmp::Ordering::Greater => {
+                    for i in empty_point.0+1..goal.0+1 {
+                        actions.push(i, cranes[i].shift(Direction::Up as usize, &mut terminal));
+                    }
+                },
+                _ => {}
+            }
+            actions.balance();
+
+            eprintln!("terminal.grid_container: {:?}", terminal.grid_container);
+            eprintln!("terminal.container_grid: {:?}", terminal.container_grid);
+            eprintln!("terminal.grid_crane: {:?}", terminal.grid_crane);
+            eprintln!("terminal.crane_grid: {:?}\n", terminal.crane_grid);
+
+            /* 搬出口まで移動 */
+            let trace: String = cranes[0].move_crane(goal, &mut terminal);
+            for step in trace.chars() {
+                actions.push(0, step);
+            }
+            actions.push(0, cranes[0].lower(&mut terminal));
+            actions.balance();
+            carried += 1;
+            terminal.prepare_container();
+
+            eprintln!("terminal.grid_container: {:?}", terminal.grid_container);
+            eprintln!("terminal.container_grid: {:?}", terminal.container_grid);
+            eprintln!("terminal.grid_crane: {:?}", terminal.grid_crane);
+            eprintln!("terminal.crane_grid: {:?}", terminal.crane_grid);
+            eprintln!("carried: {}\n\n", carried);
+        }
+
+        /* 4. 大クレーンで右端に詰める */
+        for i in 0..input.n {
+            for j in (0..input.n-2).rev() {
+                if terminal.grid_container[i][j][0] != -1 && terminal.grid_container[i][j+1][0] == -1 {
+                    let point = (i, j);
+                    let goal = (i, j+1);
+                    let trace: String = cranes[0].move_crane(point, &mut terminal);
+                    for step in trace.chars() {
+                        actions.push(0, step);
+                    }
+                    actions.push(0, cranes[0].suspend(&mut terminal));
+                    let trace: String = cranes[0].move_crane(goal, &mut terminal);
+                    for step in trace.chars() {
+                        actions.push(0, step);
+                    }
+                    actions.push(0, cranes[0].lower(&mut terminal));
+                    actions.balance();
+                }
+            }
+        }
+        terminal.prepare_container();
+
+        eprintln!("carried: {}", carried);
+        if carried == input.n * input.n {
+            /* 5. 各搬出口の最後以外のコンテナが積み終わるまで 3 ~ 6 を繰り返す */
+            break;
+        }
+    }    
+
     write_output(actions);
 }
