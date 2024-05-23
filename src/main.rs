@@ -1,5 +1,7 @@
 use proconio::*;
 use std::collections::VecDeque;
+use std::collections::BinaryHeap;
+use std::cmp::Ordering;
 
 pub fn get_time() -> f64 {
     static mut STIME: f64 = -1.0;
@@ -29,14 +31,54 @@ enum Direction {
     Left,
     Up,
 }
+
+enum Operation {
+    Right,
+    Down,
+    Left,
+    Up,
+    Suspend,
+    Lower,
+    Stop,
+    Explode,
+}
+
 const DIR_NUM: usize = 4;
 const DX: [isize; DIR_NUM] = [0, 1, 0, -1];
 const DY: [isize; DIR_NUM] = [1, 0, -1, 0];
 const DIR: [char; DIR_NUM] = ['R', 'D', 'L', 'U'];
 
+const OP_NUM: usize = 7;
+const OP: [char; OP_NUM] = ['R', 'D', 'L', 'U', 'P', 'Q', '.'];
+
 #[inline]
 fn out_field(x: isize, y: isize, h: isize, w: isize) -> bool {
     !(0 <= x && x < h && 0 <= y && y < w)
+}
+
+#[inline]
+/* 反対の操作を返す関数 */
+fn reverse_step(step: Operation) -> Operation {
+    match step {
+        Operation::Right => Operation::Left,
+        Operation::Down => Operation::Up,
+        Operation::Left => Operation::Right,
+        Operation::Up => Operation::Down,
+        Operation::Suspend => Operation::Lower,
+        Operation::Lower => Operation::Suspend,
+        _ => panic!("invalid operation"),
+    }
+}
+
+#[inline]
+fn reverse_dir(dir: usize) -> Direction {
+    match dir {
+        0 => Direction::Left,
+        1 => Direction::Up,
+        2 => Direction::Right,
+        3 => Direction::Down,
+        _ => panic!("invalid direction"),
+    }
 }
 
 struct Input {
@@ -54,6 +96,7 @@ impl Input {
     }
 }
 
+#[derive(Clone, Eq, PartialEq)]
 struct Terminal {
     h: usize,
     w: usize,
@@ -97,6 +140,7 @@ impl Terminal {
     }
 }
 
+#[derive(Clone, Eq, PartialEq)]
 struct Crane {
     h: usize,
     w: usize,
@@ -150,10 +194,7 @@ impl Crane {
             terminal.grid_container[nx][ny][self.big as usize] = container_idx;
             terminal.grid_container[self.x][self.y][self.big as usize] = -1;
         }
-
-        if self.x == 0 {
-            terminal.prepare_container(input);
-        }
+        terminal.prepare_container(input);
 
         self.x = nx;
         self.y = ny;
@@ -192,113 +233,161 @@ impl Crane {
         assert!(!self.exploded);
         self.exploded = true;
         terminal.grid_crane[self.x][self.y] = -1;
-        terminal.grid_crane[self.x][self.y] = -1;
-        'X'
+        'B'
     }
 
-    fn move_crane(
-        &mut self,
-        goal: (usize, usize),
-        terminal: &mut Terminal,
-        input: &Input
-    ) -> String {
-        /* BFS と経路復元で Crane を目的地まで動かす関数 */
-        let mut res: String = "".to_string();
+    fn restore(&mut self, terminal: &mut Terminal) -> char {
+        /* explode を復元する関数 */
+        assert!(self.exploded);
+        self.exploded = false;
+        terminal.grid_crane[self.x][self.y] = self.idx as i8;   
+        '?'
+    }
+}
 
-        /* queue を用意 */
-        let mut queue: VecDeque<(usize, usize, usize)> = VecDeque::new();
-        queue.push_back((self.x, self.y, 0));
-        let mut dis: Vec<Vec<usize>> = vec![vec![std::usize::MAX; terminal.w]; terminal.h];
+fn write_output(out: Vec<String>) {
+    // out[0].size の 文字列を持つ Vec を作成
+    let mut answer: Vec<String> = Vec::new();
+    for _ in 0..out[0].len() {
+        answer.push("".to_string());
+    }
+    for log in out.iter() {
+        for (i, c) in log.chars().enumerate() {
+            answer[i].push(c);
+        }
+    }
+    for ans in answer.iter() {
+        println!("{}", ans);
+    }
+}
 
-        while !queue.is_empty() {
-            let (x, y, d) = queue.pop_front().unwrap();
-            if (x, y) == goal {
-                dis[x][y] = d;
-                break;
-            }
-            if dis[x][y] != std::usize::MAX {
-                continue;
-            }
-            dis[x][y] = d;
-            for dir in 0..DIR_NUM {
-                let nx = x as isize + DX[dir];
-                let ny = y as isize + DY[dir];
-                if out_field(nx, ny, terminal.h as isize, terminal.w as isize) {
-                    continue;
-                }
-                let nx = nx as usize;
-                let ny = ny as usize;
-                if terminal.grid_crane[nx][ny] != -1 || dis[nx][ny] != std::usize::MAX {
-                    continue;
-                }
-                /* small の時はコンテナがある場所には移動できない */
-                if !self.big && terminal.grid_container[nx][ny][0] != -1 {
-                    continue;
-                }
-                queue.push_back((nx, ny, d + 1));
-            }
+#[derive(Clone, Eq, PartialEq)]
+struct State {
+    score: i32,
+    terminal: Terminal,
+    cranes: Vec<Crane>,
+    operation: String,
+}
+
+impl State {
+    // fn new(value: i32, operation: Option<char>) -> Self {
+    fn new(terminal: Terminal, cranes: Vec<Crane>, operation: String) -> Self {
+        let score = Self::evaluate(&terminal);
+        Self { 
+            score,
+            terminal,
+            cranes,
+            operation,
         }
-        /* 経路復元 */
-        eprintln!("dis: {:?}", dis);
-        let mut x = goal.0;
-        let mut y = goal.1;
-        let mut d = dis[x][y];
-        let mut dirs: Vec<usize> = vec![];
-        while d > 0 {
-            for dir in 0..DIR_NUM {
-                let nx = x as isize + DX[dir];
-                let ny = y as isize + DY[dir];
-                if out_field(nx, ny, terminal.h as isize, terminal.w as isize) {
-                    continue;
-                }
-                let nx = nx as usize;
-                let ny = ny as usize;
-                if dis[nx][ny] == d - 1 {
-                    dirs.push((dir+2)%DIR_NUM);
-                    x = nx;
-                    y = ny;
-                    d -= 1;
-                    break;
-                }
-            }
-        }
-        dirs = dirs.into_iter().rev().collect();
-        for dir in dirs {
-            res.push(self.shift(dir, terminal, input));
-        }
+    }
+
+    fn next_states(&self, input: &Input) -> Vec<State> {
+        let mut res = Vec::new();
+        let mut operation = "".to_string();
         res
     }
-}
 
-fn write_output(out: Action) {
-    for log in out.log {
-        println!("{}", log);
+    fn evaluate(terminal: &Terminal) -> i32 {
+        /*
+        ========== 評価関数 ==========
+        - 現時点で各搬出口に届けたいコンテナの距離の総和
+            - ∑_i ∑_j dist(i,j) : i 行目の j 番目に搬出すべきコンテナとその搬出口との距離の総和
+        */
+        let mut score = 0;
+        score
     }
 }
 
-struct Action {
-    log: Vec<String>
+impl Ord for State {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // スコアの降順でソートするため、逆順で比較する
+        other.score.cmp(&self.score)
+    }
 }
 
-impl Action {
-    fn new(size: usize) -> Self {
-        Self {
-            log: vec!["".to_string(); size]
+impl PartialOrd for State {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+struct BeamSearch {
+    beam_width: usize,
+    states: Vec<State>,
+}
+
+impl BeamSearch {
+    fn new(beam_width: usize) -> Self {
+        BeamSearch {
+            beam_width,
+            states: Vec::new(),
         }
     }
 
-    fn push(&mut self, idx: usize, step: char) {
-        self.log[idx].push(step);
-    }
+    fn search(&mut self, initial_state: State, iterations: usize, input: &Input) -> Vec<String> {
+        let mut beam: BinaryHeap<State> = BinaryHeap::new();
+        beam.push(initial_state.clone());
+        self.states.push(initial_state.clone());
 
-    fn balance(&mut self) {
-        /* 一番手数が多いクレーンに合わせて stop して均す関数 */
-        let max_len = self.log.iter().map(|x| x.len()).max().unwrap();
-        for i in 0..self.log.len() {
-            while self.log[i].len() < max_len {
-                self.log[i].push('.');
+        eprintln!("Initial State grid_crane: {:?}", initial_state.clone().terminal.grid_crane);
+
+        for itr in 0..iterations {
+            let mut next_beam: BinaryHeap<State> = BinaryHeap::new();
+
+            while let Some(state) = beam.pop() {
+                for next_state in state.next_states(&input) {
+                    next_beam.push(next_state.clone());
+
+                    if next_beam.len() > self.beam_width {
+                        next_beam.pop();
+                    }
+
+                    if itr < 3 {
+                        eprintln!("Next State grid_crane: {:?}", next_state.terminal.grid_crane);
+                        eprintln!("Next State grid_container: {:?}", next_state.terminal.grid_container);
+                        eprintln!("Next State Score: {}", next_state.score);
+                    }
+                    self.states.push(next_state);
+                }
             }
+            
+            if itr < 3 {
+                eprintln!("Iteration: {}\n", itr);
+            }
+            for (i, state) in next_beam.iter().enumerate() {
+                if i > 2 {
+                    break;
+                }
+                if itr < 3 {
+                    eprintln!("Best {} Score: {}", i+1, state.score);
+                    eprintln!("Best {} Operation: {}\n", i+1, state.operation);
+                }
+            }
+            if itr < 3 {
+                eprintln!("====================");
+            }
+            beam = next_beam;
         }
+
+        // 最良の状態から操作のシーケンスを復元して返す
+        let best_state = beam.pop().unwrap();
+        self.restore(&best_state)
+    }
+
+    fn restore(&self, final_state: &State) -> Vec<String> {
+        let mut operations = Vec::new();
+        let mut current_state = final_state;
+    
+        while let Some(parent_index) = self.states.iter().position(|s| s.score == current_state.score && s.operation == current_state.operation) {
+            operations.push(current_state.operation.clone());
+            if parent_index == 0 {
+                break;
+            }
+            current_state = &self.states[parent_index - 1];
+        }
+    
+        operations.reverse();
+        operations
     }
 }
 
@@ -341,7 +430,7 @@ fn main() {
     /* 2. 小クレーンを右端に移動 */
     for (i, crane) in cranes.iter_mut().enumerate() {
         while crane.y < input.n - 1 {
-            actions.push(i, crane.shift(Direction::Right as usize, &mut terminal, &input));
+            actions.push(i, crane.shift(Direction::Right as usize, &mut terminal));
         }
     }
 
@@ -354,10 +443,10 @@ fn main() {
             for i in 0..input.n {
                 for j in 0..input.n {
                     for (k, container) in terminal.next_container.iter().enumerate() {
-                        if *container >= (k+1) as u8 * input.n as u8 {
+                        if *container >= (k+1) * input.n {
                             continue;
                         }
-                        if terminal.grid_container[i][j][0] == *container as i8 {
+                        if terminal.grid_container[i][j][0] == *container as i64 {
                             point = (i as i32, j as i32);
                             goal = (k as i32, input.n as i32 - 1);
                         }
@@ -372,7 +461,7 @@ fn main() {
             eprintln!("point: {:?}, goal: {:?}", point, goal);
             
             /* 目的コンテナまで移動 */
-            let trace: String = cranes[0].move_crane(point, &mut terminal, &input);
+            let trace: String = cranes[0].move_crane(point, &mut terminal);
             for step in trace.chars() {
                 actions.push(0, step);
             }
@@ -380,7 +469,9 @@ fn main() {
             actions.balance();
 
             eprintln!("terminal.grid_container: {:?}", terminal.grid_container);
+            eprintln!("terminal.container_grid: {:?}", terminal.container_grid);
             eprintln!("terminal.grid_crane: {:?}", terminal.grid_crane);
+            eprintln!("terminal.crane_grid: {:?}\n", terminal.crane_grid);
 
             /* 搬出口手前にクレーンがある場合にどける */
             let mut empty_point = (0, 0);
@@ -395,12 +486,12 @@ fn main() {
             match goal.0.cmp(&empty_point.0) {
                 std::cmp::Ordering::Less => {
                     for i in (goal.0+1..empty_point.0+1).rev() {
-                        actions.push(i, cranes[i].shift(Direction::Down as usize, &mut terminal, &input));
+                        actions.push(i, cranes[i].shift(Direction::Down as usize, &mut terminal));   
                     }
                 },
                 std::cmp::Ordering::Greater => {
                     for i in empty_point.0+1..goal.0+1 {
-                        actions.push(i, cranes[i].shift(Direction::Up as usize, &mut terminal, &input));
+                        actions.push(i, cranes[i].shift(Direction::Up as usize, &mut terminal));
                     }
                 },
                 _ => {}
@@ -408,20 +499,24 @@ fn main() {
             actions.balance();
 
             eprintln!("terminal.grid_container: {:?}", terminal.grid_container);
+            eprintln!("terminal.container_grid: {:?}", terminal.container_grid);
             eprintln!("terminal.grid_crane: {:?}", terminal.grid_crane);
+            eprintln!("terminal.crane_grid: {:?}\n", terminal.crane_grid);
 
             /* 搬出口まで移動 */
-            let trace: String = cranes[0].move_crane(goal, &mut terminal, &input);
+            let trace: String = cranes[0].move_crane(goal, &mut terminal);
             for step in trace.chars() {
                 actions.push(0, step);
             }
             actions.push(0, cranes[0].lower(&mut terminal));
             actions.balance();
             carried += 1;
-            terminal.prepare_container(&input);
+            terminal.prepare_container();
 
             eprintln!("terminal.grid_container: {:?}", terminal.grid_container);
+            eprintln!("terminal.container_grid: {:?}", terminal.container_grid);
             eprintln!("terminal.grid_crane: {:?}", terminal.grid_crane);
+            eprintln!("terminal.crane_grid: {:?}", terminal.crane_grid);
             eprintln!("carried: {}\n\n", carried);
         }
 
@@ -431,12 +526,12 @@ fn main() {
                 if terminal.grid_container[i][j][0] != -1 && terminal.grid_container[i][j+1][0] == -1 {
                     let point = (i, j);
                     let goal = (i, j+1);
-                    let trace: String = cranes[0].move_crane(point, &mut terminal, &input);
+                    let trace: String = cranes[0].move_crane(point, &mut terminal);
                     for step in trace.chars() {
                         actions.push(0, step);
                     }
                     actions.push(0, cranes[0].suspend(&mut terminal));
-                    let trace: String = cranes[0].move_crane(goal, &mut terminal, &input);
+                    let trace: String = cranes[0].move_crane(goal, &mut terminal);
                     for step in trace.chars() {
                         actions.push(0, step);
                     }
@@ -445,7 +540,7 @@ fn main() {
                 }
             }
         }
-        terminal.prepare_container(&input);
+        terminal.prepare_container();
 
         eprintln!("carried: {}", carried);
         if carried == input.n * input.n {
@@ -456,3 +551,31 @@ fn main() {
 
     write_output(actions);
 }
+
+// fn main() {
+//     /* ========== ビームサーチ解法 ========== */
+//     let input = Input::read_input();
+//     let mut terminal = Terminal::new(&input);
+//     terminal.prepare_container(&input);
+
+//     let mut cranes: Vec<Crane> = vec![];
+//     for i in 0..input.n {
+//         let big = i == 0;
+//         cranes.push(Crane::new(&input, i, i, 0, big, &mut terminal));
+//     }
+
+//     /* 最初はクレーン 0 以外は初手爆破 */
+//     for (i, crane) in cranes.iter_mut().enumerate() {
+//         if i == 0 {
+//             continue;
+//         }
+//         crane.explode(&mut terminal);
+//     }
+
+//     let initial_state = State::new(terminal, cranes, ".BBBB".to_string());
+//     let mut beam_search = BeamSearch::new(10);
+//     let operations = beam_search.search(initial_state, 100, &input);
+//     eprintln!("Operations: {:?}", operations);
+
+//     write_output(operations);
+// }
