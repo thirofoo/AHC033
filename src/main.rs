@@ -28,10 +28,43 @@ enum Direction {
     Left,
     Up,
 }
+
+enum Operation {
+    Right,
+    Down,
+    Left,
+    Up,
+    Suspend,
+    Lower,
+    Stop,
+    Explode,
+}
+
 const DIR_NUM: usize = 4;
 const DX: [isize; DIR_NUM] = [0, 1, 0, -1];
 const DY: [isize; DIR_NUM] = [1, 0, -1, 0];
 const DIR: [char; DIR_NUM] = ['R', 'D', 'L', 'U'];
+
+const OP_NUM: usize = 7;
+const OP: [char; OP_NUM] = ['R', 'D', 'L', 'U', 'P', 'Q', '.'];
+
+const MAX_WIDTH: usize = 100;
+const TURN: usize = 1000;
+
+#[inline]
+/* 反対の方向を返す関数 */
+fn reverse_op(op: usize) -> Operation {
+    match op {
+        0 => Operation::Left,
+        1 => Operation::Up,
+        2 => Operation::Right,
+        3 => Operation::Down,
+        4 => Operation::Lower,
+        5 => Operation::Suspend,
+        6 => Operation::Stop,
+        _ => panic!("invalid op"),
+    }
+}
 
 #[inline]
 fn out_field(x: isize, y: isize, h: isize, w: isize) -> bool {
@@ -42,7 +75,6 @@ struct Input {
     n: usize,
     a: Vec<Vec<i64>>,
 }
-
 impl Input {
     fn read_input() -> Self {
         input! {
@@ -64,7 +96,6 @@ struct Crane {
     big: bool,
     exploded: bool,
 }
-
 impl Crane {
     fn new(input: &Input, _idx: usize, _x: usize, _y: usize, _big: bool) -> Self {
         Self {
@@ -84,38 +115,18 @@ impl Crane {
         dir: usize,
         grid_crane: &mut [Vec<isize>],
         grid_cont: &mut [Vec<Vec<i64>>],
+        cont_suspended: &mut [Vec<bool>],
     ) -> char {
-        if self.exploded {
-            // クレーンが爆発している場合は NG
-            return 'X'; // 行動失敗時は 'X' を返す
-        }
-        let nx = self.x as isize + DX[dir];
-        let ny = self.y as isize + DY[dir];
-
-        if out_field(nx, ny, self.h as isize, self.w as isize) {
-            // 場外に出ている場合は NG
-            return 'X';
-        }
-        let nx = nx as usize;
-        let ny = ny as usize;
-
-        if grid_crane[nx][ny] != -1 {
-            // 隣にクレーンがある場合は NG
-            return 'X';
-        }
-
-        if self.suspended && grid_cont[nx][ny][self.big as usize] != -1 {
-            // 吊り下げていて移動先にコンテナがある場合は NG
-            return 'X';
-        }
-
+        let nx = (self.x as isize + DX[dir]) as usize;
+        let ny = (self.y as isize + DY[dir]) as usize;
         grid_crane[nx][ny] = self.idx as isize;
         grid_crane[self.x][self.y] = -1;
 
         if self.suspended {
-            let next_cont = grid_cont[self.x][self.y][self.big as usize];
-            grid_cont[nx][ny][self.big as usize] = next_cont;
+            grid_cont[nx][ny][self.big as usize] = grid_cont[self.x][self.y][self.big as usize];
             grid_cont[self.x][self.y][self.big as usize] = -1;
+            cont_suspended[nx][ny] = true;
+            cont_suspended[self.x][self.y] = false;
         }
 
         self.x = nx;
@@ -123,30 +134,28 @@ impl Crane {
         DIR[dir]
     }
 
-    fn suspend(&mut self, grid_cont: &mut [Vec<Vec<i64>>]) -> char {
-        if self.exploded || self.suspended {
-            // クレーンが爆発していたり、すでに吊り下げている場合は NG
-            return 'X';
-        }
+    fn suspend(
+        &mut self,
+        grid_cont: &mut [Vec<Vec<i64>>],
+        cont_suspended: &mut [Vec<bool>],
+    ) -> char {
         self.suspended = true;
+        cont_suspended[self.x][self.y] = true;
         if self.big {
-            let next_cont = grid_cont[self.x][self.y][0];
-            grid_cont[self.x][self.y][1] = next_cont;
-            grid_cont[self.x][self.y][0] = -1;
+            grid_cont[self.x][self.y].swap(0, 1);
         }
         'P'
     }
 
-    fn lower(&mut self, grid_cont: &mut [Vec<Vec<i64>>]) -> char {
-        if self.exploded || !self.suspended {
-            // クレーンが爆発していたり、吊り下げていない場合は NG
-            return 'X';
-        }
+    fn lower(
+        &mut self,
+        grid_cont: &mut [Vec<Vec<i64>>],
+        cont_suspended: &mut [Vec<bool>],
+    ) -> char {
         self.suspended = false;
+        cont_suspended[self.x][self.y] = false;
         if self.big {
-            let next_cont = grid_cont[self.x][self.y][1];
-            grid_cont[self.x][self.y][0] = next_cont;
-            grid_cont[self.x][self.y][1] = -1;
+            grid_cont[self.x][self.y].swap(0, 1);
         }
         'Q'
     }
@@ -156,14 +165,116 @@ impl Crane {
     }
 
     fn explode(&mut self, grid_crane: &mut [Vec<isize>]) -> char {
-        if self.exploded {
-            // クレーンが爆発している場合は NG
-            return 'X';
-        }
         self.exploded = true;
         grid_crane[self.x][self.y] = -1;
         grid_crane[self.x][self.y] = -1;
         'B'
+    }
+
+    fn action(
+        &mut self,
+        action: usize,
+        grid_crane: &mut [Vec<isize>],
+        grid_cont: &mut [Vec<Vec<i64>>],
+        cont_suspended: &mut [Vec<bool>],
+    ) -> char {
+        match action {
+            0..=3 => self.shift(action, grid_crane, grid_cont, cont_suspended),
+            4 => self.suspend(grid_cont, cont_suspended),
+            5 => self.lower(grid_cont, cont_suspended),
+            6 => self.stop(),
+            7 => self.explode(grid_crane),
+            _ => panic!("invalid action"),
+        }
+    }
+
+    fn shift_ok(
+        &self,
+        dir: usize,
+        grid_crane: &[Vec<isize>],
+        grid_cont: &[Vec<Vec<i64>>],
+    ) -> bool {
+        if self.exploded {
+            // 既に爆破している場合は NG
+            return false;
+        }
+        let nx = self.x as isize + DX[dir];
+        let ny = self.y as isize + DY[dir];
+        if out_field(nx, ny, self.h as isize, self.w as isize) {
+            // フィールド外に出る場合は NG
+            return false;
+        }
+        let nx = nx as usize;
+        let ny = ny as usize;
+        if grid_crane[nx][ny] != -1 {
+            // 移動先にクレーンがいる場合は NG
+            return false;
+        }
+        if !self.big && self.suspended && grid_cont[nx][ny][self.big as usize] != -1 {
+            // 小クレーンで吊り上げていて、移動先にコンテナがある場合は NG
+            return false;
+        }
+        true
+    }
+
+    fn suspend_ok(&self, grid_cont: &[Vec<Vec<i64>>]) -> bool {
+        if self.exploded || self.suspended {
+            // 既に爆破している場合や吊り上げている場合は NG
+            return false;
+        }
+        if grid_cont[self.x][self.y][0] == -1 {
+            // 吊り上げるコンテナがない場合は NG
+            return false;
+        }
+        true
+    }
+
+    fn lower_ok(
+        &self,
+        grid_cont: &[Vec<Vec<i64>>],
+        out_cont_idx: &[usize]
+    ) -> bool {
+        if self.exploded || !self.suspended {
+            // 既に爆破している場合や吊り上げていない場合は NG
+            return false;
+        }
+        let cond_idx: usize = grid_cont[self.x][self.y][self.big as usize] as usize;
+        let x = cond_idx / self.h;
+        if !(self.y != self.w - 1 || self.x == x && out_cont_idx[x] == cond_idx) {
+            // 降ろす場所が不適の場合は NG
+            return false;
+        }
+        true
+    }
+
+    fn explode_ok(&self) -> bool {
+        // 既に爆破している場合は NG
+        if self.exploded {
+            return false;
+        }
+        true
+    }
+
+    fn stop_ok(&self) -> bool {
+        // 何もしないと進捗が出なくて難しいので一旦 false
+        false
+    }
+
+    fn action_ok(
+        &self,
+        action: usize,
+        grid_crane: &[Vec<isize>],
+        grid_cont: &[Vec<Vec<i64>>],
+        out_cont_idx: &[usize],
+    ) -> bool {
+        match action {
+            0..=3 => self.shift_ok(action, grid_crane, grid_cont),
+            4 => self.suspend_ok(grid_cont),
+            5 => self.lower_ok(grid_cont, out_cont_idx),
+            6 => self.stop_ok(),
+            7 => self.explode_ok(),
+            _ => panic!("invalid action"),
+        }
     }
 }
 
@@ -171,14 +282,19 @@ impl Crane {
 struct Terminal {
     h: usize,
     w: usize,
-    conts: Vec<Vec<i64>>,          // 行 i から j 番目に来るコンテナの index
-    out_cont_idx: Vec<usize>,      // 各搬出口から今搬出すべきコンテナの index
-    incoming_cont_idx: Vec<usize>, // 各搬入口から次に場に出るべきコンテナの index
-    grid_cont: Vec<Vec<Vec<i64>>>, // (i, j) で上空(1) or 接地(0) が k のコンテナの index
-    grid_crane: Vec<Vec<isize>>,   // (i, j) にいるクレーンの index
-    cranes: Vec<Crane>,            // 各クレーンの情報
-}
+    score: i64,
+    turn: usize,
+    conts: Vec<Vec<i64>>,                // 行 i から j 番目に来るコンテナの index
+    out_cont_idx: Vec<usize>,            // 各搬出口から今搬出すべきコンテナの index
+    incoming_cont_idx: Vec<usize>,       // 各搬入口から今搬入すべきコンテナの index
+    grid_cont: Vec<Vec<Vec<i64>>>,       // (i, j) で上空(1) or 接地(0) が k のコンテナの index
+    grid_crane: Vec<Vec<isize>>,         // (i, j) にいるクレーンの index
+    cranes: Vec<Crane>,                  // 各クレーンの情報
+    cont_suspended: Vec<Vec<bool>>,      // (i, j) にあるコンテナが吊り上げられているかどうか
 
+    out_cont_turn: Vec<Vec<usize>>,      // 各搬出口から i ターン目に搬出したコンテナの (index, x)
+    incoming_cont_turn: Vec<Vec<usize>>, // 各搬入口から i ターン目に搬入したコンテナの (index, x)
+}
 impl Terminal {
     fn new(input: &Input) -> Self {
         let mut _out_cont_idx: Vec<usize> = vec![0; input.n];
@@ -187,66 +303,453 @@ impl Terminal {
             *cont_idx = i * input.n;
         }
         // クレーンをターミナル上で初期化
-        let mut _grid_crane: Vec<Vec<isize>> = vec![vec![-1; input.n]; input.n];
         let mut _cranes: Vec<Crane> = vec![];
-        for i in 0..input.n {
+        let mut _grid_crane: Vec<Vec<isize>> = vec![vec![-1; input.n]; input.n];
+        for (i, crane) in _grid_crane.iter_mut().enumerate().take(input.n) {
             let big = i == 0;
             _cranes.push(Crane::new(input, i, i, 0, big));
-        }
-        for (i, crane) in _cranes.iter().enumerate() {
-            _grid_crane[crane.x][crane.y] = i as isize;
+            crane[0] = i as isize;
         }
         Self {
             h: input.n,
             w: input.n,
+            score: 0,
+            turn: 0,
             conts: input.a.to_vec(),
             out_cont_idx: _out_cont_idx,
             incoming_cont_idx: vec![0; input.n],
             grid_cont: vec![vec![vec![-1; 2]; input.n]; input.n],
             grid_crane: _grid_crane,
             cranes: _cranes,
+            cont_suspended: vec![vec![false; input.n]; input.n],
+            out_cont_turn: vec![vec![]; TURN+1],
+            incoming_cont_turn: vec![vec![]; TURN+1],
         }
     }
 
-    /* 搬入口が空いてる時にコンテナを展開する関数 */
+    /* 搬入口が空いてる時にコンテナを搬入する関数 */
     fn prepare_cont(&mut self) {
         for i in 0..self.h {
-            // コンテナ展開
-            if self.grid_cont[i][0][0] == -1 && self.incoming_cont_idx[i] < self.conts.len() {
+            // 搬入口が空いている場合
+            if self.grid_cont[i][0][0] == -1 && self.grid_cont[i][0][1] == -1 && self.incoming_cont_idx[i] < self.w {
+                // コンテナを搬入
                 self.grid_cont[i][0][0] = self.conts[i][self.incoming_cont_idx[i]];
+                // そのターンに何を搬入したかを履歴として持つ
+                self.incoming_cont_turn[self.turn].push(i);
+                // 次に搬入すべきコンテナに更新
                 self.incoming_cont_idx[i] += 1;
             }
         }
+    }
+
+    /* 今のターンで搬入口から搬入されたコンテナを元に戻す関数 */
+    fn prepare_cont_revert(&mut self) {
+        for i in self.incoming_cont_turn[self.turn].clone() {
+            // 搬入したコンテナをクリア
+            self.grid_cont[i][0][0] = -1;
+            // 次に搬入すべきコンテナを戻す
+            self.incoming_cont_idx[i] -= 1;
+        }
+        self.incoming_cont_turn[self.turn].clear();
     }
 
     /* 搬出口にあるコンテナを搬出する関数 */
     fn carry_out_cont(&mut self) {
         for i in 0..self.h {
             // コンテナ搬出
-            if self.grid_cont[i][self.w-1][0] != -1 {
-                let incoming_cont_idx = self.grid_cont[i][self.w-1][0];
+            if self.grid_cont[i][self.w-1][0] != -1 && !self.cont_suspended[i][self.w-1] {
+                // そのターンに何を搬出したかを履歴として持つ
+                self.out_cont_turn[self.turn].push(i);
+                // 次に搬出すべきコンテナに更新
+                self.out_cont_idx[i] += 1;
+                // 搬出済みなのでコンテナ情報をクリア
                 self.grid_cont[i][self.w-1][0] = -1;
-                self.out_cont_idx[(incoming_cont_idx / self.h as i64) as usize] += 1;
             }
         }
     }
 
-    /* 差分更新で O(1) で次のノードに遷移する関数 */
-    fn apply(&mut self, node: &Node){
-        todo!();
+    /* 今のターンで搬出口から搬出されたコンテナを元に戻す関数 */
+    fn carry_out_cont_revert(&mut self) {
+        for i in self.out_cont_turn[self.turn].clone() {
+            // 搬出したコンテナをクリア
+            self.grid_cont[i][self.w-1][0] = -1;
+            // 次に搬出すべきコンテナを戻す
+            self.out_cont_idx[i] -= 1;
+        }
+        self.out_cont_turn[self.turn].clear();
     }
 
-    /* 差分更新で O(1) で前のノードに遷移する関数 */
-    fn revert(&mut self,node: &Node){
-        todo!();
+    /* 次のノードに遷移する関数 */
+    fn apply(&mut self, node: &Node) {
+        let action = node.op;
+
+        self.cranes[self.turn % 5].action(
+            action,
+            &mut self.grid_crane,
+            &mut self.grid_cont,
+            &mut self.cont_suspended,
+        );
+        self.carry_out_cont();
+        self.prepare_cont();
+        self.turn += 1;
+        
+        self.score = self.evaluate();
+
+        // eprintln!("===== apply =====");
+        // eprintln!("turn: {}, score: {}, op: {}", self.turn, self.score, OP[action]);
+        // for i in 0..self.h {
+        //     eprint!("{} ", self.incoming_cont_idx[i]);
+        // }
+        // eprintln!();
+        // for i in 0..self.h {
+        //     for j in 0..self.w {
+        //         eprint!("{} ", self.grid_cont[i][j][0]);
+        //     }
+        //     eprintln!();
+        // }
+        // eprintln!();
+        // for i in 0..self.h {
+        //     for j in 0..self.w {
+        //         eprint!("{} ", self.grid_crane[i][j]);
+        //     }
+        //     eprintln!();
+        // }
+        // eprintln!("=================")
+    }
+
+    /* 前のノードに遷移する関数 */
+    fn revert(&mut self, node: &Node) {
+        let action = node.op;
+
+        self.turn -= 1;
+        self.prepare_cont_revert();
+        self.carry_out_cont_revert();
+        self.cranes[self.turn % 5].action(
+            reverse_op(action) as usize,
+            &mut self.grid_crane,
+            &mut self.grid_cont,
+            &mut self.cont_suspended
+        );
+
+        self.score = self.evaluate();
+
+        // eprintln!("===== revert =====");
+        // eprintln!("turn: {}, score: {}, op: {}", self.turn, self.score, OP[action]);
+        // for i in 0..self.h {
+        //     eprint!("{} ", self.incoming_cont_idx[i]);
+        // }
+        // eprintln!();
+        // for i in 0..self.h {
+        //     for j in 0..self.w {
+        //         eprint!("{} ", self.grid_cont[i][j][0]);
+        //     }
+        //     eprintln!();
+        // }
+        // eprintln!();
+        // for i in 0..self.h {
+        //     for j in 0..self.w {
+        //         eprint!("{} ", self.grid_crane[i][j]);
+        //     }
+        //     eprintln!();
+        // }
+        // eprintln!("=================")
+    }
+
+    fn evaluate(&self) -> i64 {
+        /*
+        ========== 評価関数 ==========
+        目的地点とコンテナのマンハッタン距離を d として、∑_{i,j} d(i,j) * 10^{何番目に搬出すべきか} の最小化を目指す
+        */
+        // 盤面に存在するコンテナの距離を考慮
+        let mut score: i64 = 0;
+        for i in 0..self.h {
+            for j in 0..self.w {
+                for k in 0..2 {
+                    let gx = self.grid_cont[i][j][k] / self.h as i64;
+                    let perm = self.grid_cont[i][j][k] % self.h as i64;
+                    if self.grid_cont[i][j][k] != -1 {
+                        let mut add = 0;
+                        // x 方向の寄与
+                        add += (i as i64 - gx).abs();
+                        // y 方向の寄与
+                        add += (j as i64 - (self.w - 1) as i64).abs();
+                        // 倍率
+                        add *= 10_i64.pow(2 * (self.w as i64 - perm - 1) as u32 + 1);
+                        score += add;
+                    }
+                }
+            }
+        }
+        // 盤面に存在しないコンテナの距離を考慮
+        for i in 0..self.h {
+            for j in self.incoming_cont_idx[i]..self.w {
+                let gx = self.conts[i][j] / self.h as i64;
+                let perm = self.conts[i][j] % self.h as i64;
+
+                let mut add = 0;
+                // x 方向の寄与
+                add += (i as i64 - gx).abs();
+                // y 方向の寄与
+                add += ( -(j as i64 - self.incoming_cont_idx[i] as i64 + 1) - (self.w - 1) as i64).abs();
+                // 倍率
+                add *= 10_i64.pow(2 * (self.w as i64 - perm - 1) as u32);
+                score += add;
+            }
+        }
+        score
     }
 }
 
+#[derive(Clone, Debug)]
+struct Cand {
+    op: usize,
+    parent: usize,
+    eval_score: i64,
+    hash: u64,
+}
+impl Cand {
+    fn raw_score(&self) -> i64 {
+        todo!();
+    }
+    
+    fn to_node(&self) -> Node {
+        Node{
+            child: !0,
+            prev: !0,
+            next: !0,
+            op: self.op,
+            parent: self.parent,
+        }
+    }
+}
+
+
+#[derive(Clone,Default)]
 struct Node {
-    action: char,
-    crane_idx: usize,
-    prev: Option<usize>,
-    next: Option<usize>,
+    op: usize,
+    parent: usize, // 親Node
+    child: usize, // 代表の子Node
+    prev: usize, // 前の兄弟Node
+    next: usize, // 次の兄弟Node
+}
+
+struct BeamSearch {
+    state: Terminal,
+    leaf: Vec<usize>, // 子が存在しないNodeのindex
+    next_leaf: Vec<usize>,
+    nodes: Vec<Node>,
+    cur_node: usize,
+    free: Vec<usize>, // nodesのうち使われていないindex
+}
+impl BeamSearch {
+    fn new(state: Terminal, node: Node) -> BeamSearch {
+        const MAX_NODES:usize = MAX_WIDTH * TURN;
+        let mut nodes = vec![Node::default();MAX_NODES];
+        nodes[0] = node;
+        let free=(1..MAX_NODES).rev().collect();
+        
+        BeamSearch {
+            state,nodes,free,
+            leaf:vec![0],
+            next_leaf:vec![],
+            cur_node:0,
+        }
+    }
+    
+    // 頂点を新たに追加する
+    // 代表の子Nodeの前に挿入する形で実装
+    fn add_node(&mut self, cand: Cand) {
+        let next=self.nodes[cand.parent].child;
+        let new=self.free.pop().expect("MAX_NODEが足りないよ");
+        if next != !0 {
+            self.nodes[next].prev=new;
+        }
+        self.nodes[cand.parent].child=new;
+        
+        self.next_leaf.push(new);
+        self.nodes[new] = Node {next,..cand.to_node()};
+    }
+
+    // 既に探索済みのノードで葉のノードを再帰的に消していく
+    fn del_node(&mut self, mut idx: usize) {
+        loop {
+            self.free.push(idx);
+            let Node {prev,next,parent,..} = self.nodes[idx];
+            assert_ne!(parent,!0,"全てのノードを消そうとしています");
+            // 兄弟がいないなら親を消しに行く
+            if prev&next== !0 {
+                idx=parent;
+                continue;
+            }
+
+            if prev != !0 {
+                self.nodes[prev].next=next;
+            }
+            else {
+                self.nodes[parent].child=next;
+            }
+            if next != !0 {
+                self.nodes[next].prev=prev;
+            }
+            
+            break;
+        }
+    }
+
+        // dfsで木を走査
+    // 一本道の場合戻る必要はないのでそれをsingleで管理
+    fn dfs(&mut self, cands: &mut Vec<Cand>, single: bool){
+        if self.nodes[self.cur_node].child==!0{
+            self.append_cands(self.cur_node,cands);
+            return;
+        }
+
+        let node=self.cur_node;
+        let mut child=self.nodes[node].child;
+        let next_single=single&(self.nodes[child].next==!0);
+
+        // let prev_state=self.state.clone();
+        loop{
+            self.cur_node=child;
+            self.state.apply(&self.nodes[child]);
+            self.dfs(cands,next_single);
+
+            if !next_single{
+                self.state.revert(&self.nodes[child]);
+                // assert!(prev_state==self.state);
+            }
+            child=self.nodes[child].next;
+            if child==!0{
+                break;
+            }
+        }
+        
+        if !next_single{
+            self.cur_node=node;
+        }
+    }
+
+    // 走査の非再帰実装
+    fn no_dfs(&mut self, cands: &mut Vec<Cand>) {
+        // 1本道でなくなるまで潜る
+        loop {
+            let Node {next, child,..} = self.nodes[self.cur_node];
+            if next == !0 || child == !0 {
+                break;
+            }
+            self.cur_node = child;
+            self.state.apply(&self.nodes[self.cur_node]);
+        }
+
+        let root=self.cur_node;
+        loop {
+            let child = self.nodes[self.cur_node].child;
+            if child == !0 {
+                self.append_cands(self.cur_node, cands);
+                loop {
+                    if self.cur_node == root {
+                        return;
+                    }
+                    let node = &self.nodes[self.cur_node];
+                    self.state.revert(node);
+                    if node.next != !0 {
+                        self.cur_node = node.next;
+                        self.state.apply(&self.nodes[self.cur_node]);
+                        break;
+                    }
+                    self.cur_node = node.parent;
+                }
+            }
+            else {
+                self.cur_node = child;
+                self.state.apply(&self.nodes[self.cur_node]);
+            }
+        }
+    }
+
+    fn enum_cands(&mut self, cands: &mut Vec<Cand>) {
+        self.dfs(cands, true);
+        // self.no_dfs(cands);
+    }
+
+    fn update<I:Iterator<Item=Cand>>(&mut self, cands:I) {
+        self.next_leaf.clear();
+        for cand in cands {
+            self.add_node(cand);
+        }
+
+        for i in 0..self.leaf.len() {
+            let n = self.leaf[i];
+            // 子が存在しないノードは無駄なので消す
+            if self.nodes[n].child == !0 {
+                self.del_node(n);
+            }
+        }
+
+        std::mem::swap(&mut self.leaf,&mut self.next_leaf);
+    }
+
+    fn restore(&self, mut idx: usize) -> Vec<usize> {
+        let mut ret=vec![];
+        loop {
+            let Node {op,parent,..} = self.nodes[idx];
+            if op == !0 {
+                break;
+            }
+            ret.push(op);
+            idx = parent;
+        }
+        
+        ret.reverse();
+        ret
+    }
+
+    // self.stateがself.nodes[idx]のノードが表す状態になっている
+    // self.nodes[idx]からのCandをcandsに積む
+    fn append_cands(&self, idx: usize, cands: &mut Vec<Cand>) {
+        let node = &self.nodes[idx];
+        assert_eq!(node.child, !0);
+
+        for _op in 0..OP_NUM {
+            // 行動可能かを check
+            if !self.state.cranes[self.state.turn % 5].action_ok(
+                _op,
+                &self.state.grid_crane,
+                &self.state.grid_cont,
+                &self.state.out_cont_idx,
+            ) {
+                continue;
+            }
+
+            // 盤面評価値を計算（差分計算で求める）
+            let mut _eval_score = self.state.score;
+            if _op < 4 && self.state.cranes[self.state.turn % 5].suspended {
+                let crane = &self.state.cranes[self.state.turn % 5];
+
+                let px = crane.x as i64;
+                let py = crane.y as i64;
+                let nx = crane.x as i64 + DX[_op] as i64;
+                let ny = crane.y as i64 + DY[_op] as i64;
+
+                let cont = self.state.grid_cont[px as usize][py as usize][crane.big as usize];
+                assert!(cont != -1);
+                let gx = cont / self.state.h as i64;
+                let perm = cont % self.state.h as i64;
+
+                _eval_score -= ((px - gx).abs() + (py - (self.state.w - 1) as i64).abs()) * 10_i64.pow(2 * (self.state.w as i64 - perm - 1) as u32);
+                _eval_score += ((nx - gx).abs() + (ny - (self.state.w - 1) as i64).abs()) * 10_i64.pow(2 * (self.state.w as i64 - perm - 1) as u32);
+            }
+
+            cands.push(
+                Cand {
+                    op: _op,
+                    parent: idx,
+                    eval_score: _eval_score,
+                    hash: 0,
+                }
+            );
+        }
+    }
 }
 
 fn write_output(actions: String) {
@@ -261,59 +764,66 @@ fn write_output(actions: String) {
 }
 
 fn main() {
-    // 答えとなる行動の文字列を 1 次元化したもの
-    let mut actions: String = "".to_string();
-
     let input = Input::read_input();
-    let mut terminal = Terminal::new(&input);
-    terminal.prepare_cont(); // 初期コンテナの展開
 
-    /* 1. 20 マス分コンテナを展開する */
-    for y in (1..input.n-1).rev() {
-        // コンテナ吊り上げ
-        for crane in terminal.cranes.iter_mut() {
-            let action = crane.suspend(&mut terminal.grid_cont);
-            actions.push_str(&action.to_string());
+    /*  ========== ビームサーチ解法 ========== */
+    // BeamSearchの初期化
+    let mut initial_terminal = Terminal::new(&input);
+    initial_terminal.prepare_cont();
+    initial_terminal.incoming_cont_turn[0].clear();
+    let initial_node: Node = {
+        Node {
+            op: !0,
+            parent: !0,
+            child: !0,
+            prev: !0,
+            next: !0,
         }
-        // 右移動
-        for _ in 0..y {
-            for crane in terminal.cranes.iter_mut() {
-                let action = crane.shift(
-                    Direction::Right as usize,
-                    &mut terminal.grid_crane,
-                    &mut terminal.grid_cont
-                );
-                actions.push_str(&action.to_string());
-            }
+    };
+    
+    let mut solver = BeamSearch::new(
+        initial_terminal,
+        initial_node
+    );
+
+    for turn in 0..TURN {
+        eprintln!("turn: {}", turn);
+
+        // 候補リストを生成
+        let mut cands = Vec::new();
+        solver.enum_cands(&mut cands);
+
+        // スコアが低い順にソート (reverse)
+        cands.sort_by(|a, b| a.eval_score.cmp(&b.eval_score));
+        let top_cands = cands.into_iter().take(MAX_WIDTH);
+
+        // top_cands の top 3 の候補を表示
+        let _top_cands: Vec<Cand> = top_cands.clone().collect();
+        for cand in _top_cands.iter().take(3) {
+            eprintln!("Score: {}, op: {}", cand.eval_score, OP[cand.op]);
         }
-        // コンテナ下ろし
-        for crane in terminal.cranes.iter_mut() {
-            let action = crane.lower(&mut terminal.grid_cont);
-            actions.push_str(&action.to_string());
-        }
-        // 左移動
-        for _ in 0..y {
-            for crane in terminal.cranes.iter_mut() {
-                let action = crane.shift(
-                    Direction::Left as usize,
-                    &mut terminal.grid_crane,
-                    &mut terminal.grid_cont
-                );
-                actions.push_str(&action.to_string());
-            }
+        eprintln!("candidates: {}\n", solver.leaf.len());
+        
+        // 候補を基に次の状態を更新
+        solver.update(top_cands);
+
+        if turn == 50 {
+            // let path = solver.restore(solver.cur_node);
+            // let mut actions: String = "".to_string();
+            // eprintln!("path: {:?}", path);
+            // for op in path {
+            //     actions.push(OP[op]);
+            // }
+            // write_output(actions);
         }
     }
 
-    /* 2. 小クレーンを右端に移動 */
-    for _ in 0..input.n-1 {
-        for crane in terminal.cranes.iter_mut() {
-            let action = crane.shift(
-                Direction::Right as usize,
-                &mut terminal.grid_crane,
-                &mut terminal.grid_cont
-            );
-            actions.push_str(&action.to_string());
-        }
+    // 最終状態の復元
+    let final_path = solver.restore(solver.cur_node);
+    let mut actions: String = "".to_string();
+    for op in final_path {
+        actions.push(OP[op]);
     }
+
     write_output(actions)
 }
