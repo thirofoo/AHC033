@@ -21,7 +21,7 @@ const DIR: [char; DIR_NUM] = ['R', 'D', 'L', 'U'];
 const OP_NUM: usize = 7;
 const OP: [char; OP_NUM] = ['R', 'D', 'L', 'U', 'P', 'Q', '.'];
 
-const MAX_WIDTH: usize = 5000;
+const MAX_WIDTH: usize = 3000;
 const TURN: usize = 1000;
 const USING_CRANE: usize = 5;
 
@@ -371,7 +371,7 @@ impl Terminal {
         Self {
             h: input.n,
             w: input.n,
-            score: 0,
+            score: 1,
             turn: 0,
             now_crane: 0,
             out_cnt: 0,
@@ -418,8 +418,8 @@ impl Terminal {
                     sub += (npy1 - (self.w - 1) as i64).abs() * (npy1 - (self.w - 1) as i64).abs();
                     add += (npy2 - (self.w - 1) as i64).abs() * (npy2 - (self.w - 1) as i64).abs();
                     // 倍率
-                    sub *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
-                    add *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
+                    sub *= 10_i64.pow((self.w as i64 - perm) as u32 + 2);
+                    add *= 10_i64.pow((self.w as i64 - perm) as u32 + 2);
                     self.score += add - sub;
                 }
 
@@ -457,8 +457,8 @@ impl Terminal {
                 sub += (npy2 - (self.w - 1) as i64).abs() * (npy2 - (self.w - 1) as i64).abs();
                 add += (npy1 - (self.w - 1) as i64).abs() * (npy1 - (self.w - 1) as i64).abs();
                 // 倍率
-                sub *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
-                add *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
+                sub *= 10_i64.pow((self.w as i64 - perm) as u32 + 2);
+                add *= 10_i64.pow((self.w as i64 - perm) as u32 + 2);
                 self.score += add - sub;
             }
         }
@@ -481,6 +481,12 @@ impl Terminal {
 
                 // 搬出したコンテナ数を更新
                 self.out_cnt += 1;
+
+                if self.out_cnt == self.h * self.w {
+                    // 全てのコンテナを搬出した場合は終了
+                    self.score = 0;
+                    return;
+                }
             }
         }
     }
@@ -529,8 +535,8 @@ impl Terminal {
             sub += (py - (self.w - 1) as i64).abs() * (py - (self.w - 1) as i64).abs();
             add += (ny - (self.w - 1) as i64).abs() * (ny - (self.w - 1) as i64).abs();
             // 倍率
-            sub *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
-            add *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
+            sub *= 10_i64.pow((self.w as i64 - perm) as u32 + 2);
+            add *= 10_i64.pow((self.w as i64 - perm) as u32 + 2);
             self.score += add - sub;
         }
 
@@ -585,8 +591,8 @@ impl Terminal {
             sub += (ny - (self.w - 1) as i64).abs() * (ny - (self.w - 1) as i64).abs();
             add += (py - (self.w - 1) as i64).abs() * (py - (self.w - 1) as i64).abs();
             // 倍率
-            sub *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
-            add *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
+            sub *= 10_i64.pow((self.w as i64 - perm) as u32 + 2);
+            add *= 10_i64.pow((self.w as i64 - perm) as u32 + 2);
             self.score += add - sub;
         }
     }
@@ -609,7 +615,7 @@ impl Terminal {
                         // y 方向の寄与
                         add += (j as i64 - (self.w - 1) as i64).abs() * (j as i64 - (self.w - 1) as i64).abs();
                         // 倍率
-                        add *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
+                        add *= 10_i64.pow((self.w as i64 - perm) as u32 + 2);
                         score += add;
                     }
                 }
@@ -627,11 +633,13 @@ impl Terminal {
                 // y 方向の寄与
                 add += ( -(j as i64 - self.incoming_cont_idx[i] as i64 + 1) - (self.w - 1) as i64).abs() * ( -(j as i64 - self.incoming_cont_idx[i] as i64 + 1) - (self.w - 1) as i64).abs();
                 // 倍率
-                add *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
+                add *= 10_i64.pow((self.w as i64 - perm) as u32 + 2);
                 score += add;
             }
         }
-
+        if self.out_cnt != self.h * self.w {
+            score += 1;
+        }
         score
     }
 }
@@ -673,6 +681,7 @@ struct BeamSearch {
     free: Vec<usize>, // nodesのうち使われていないindex
 }
 impl BeamSearch {
+    /* [rhooさんの記事](https://qiita.com/rhoo/items/2f647e32f6ff2c6ee056)を参考 */
     fn new(state: Terminal, node: Node) -> BeamSearch {
         const MAX_NODES:usize = MAX_WIDTH * TURN;
         let mut nodes = vec![Node::default();MAX_NODES];
@@ -799,8 +808,8 @@ impl BeamSearch {
         ret
     }
 
-    // self.stateがself.nodes[idx]のノードが表す状態になっている
-    // self.nodes[idx]からのCandをcandsに積む
+    // self.state が self.nodes[idx] のノードが表す状態になっている
+    // self.nodes[idx] からの Cand を cands に積む
     fn append_cands(&mut self, idx: usize, cands: &mut Vec<Cand>) {
         let node = &self.nodes[idx];
         assert_eq!(node.child, !0);
@@ -848,8 +857,8 @@ impl BeamSearch {
                 sub += (py - (self.state.w - 1) as i64).abs() * (py - (self.state.w - 1) as i64).abs();
                 add += (ny - (self.state.w - 1) as i64).abs() * (ny - (self.state.w - 1) as i64).abs();
                 // 倍率
-                sub *= 10_i64.pow((self.state.w as i64 - perm) as u32 + 1);
-                add *= 10_i64.pow((self.state.w as i64 - perm) as u32 + 1);
+                sub *= 10_i64.pow((self.state.w as i64 - perm) as u32 + 2);
+                add *= 10_i64.pow((self.state.w as i64 - perm) as u32 + 2);
                 score += add - sub;
 
                 // suspended && right && py == 0 の時は搬入口から出るコンテナによりそこの評価値変動も考慮
@@ -870,8 +879,8 @@ impl BeamSearch {
                         sub += (npy1 - (self.state.w - 1) as i64).abs() * (npy1 - (self.state.w - 1) as i64).abs();
                         add += (npy2 - (self.state.w - 1) as i64).abs() * (npy2 - (self.state.w - 1) as i64).abs();
                         // 倍率
-                        sub *= 10_i64.pow((self.state.w as i64 - perm) as u32 + 1);
-                        add *= 10_i64.pow((self.state.w as i64 - perm) as u32 + 1);
+                        sub *= 10_i64.pow((self.state.w as i64 - perm) as u32 + 2);
+                        add *= 10_i64.pow((self.state.w as i64 - perm) as u32 + 2);
                         
                         score += add - sub;
                     }
@@ -939,6 +948,8 @@ fn main() {
     let mut actions: String = "".to_string();
     eprintln!("initial score: {}", solver.state.score);
 
+    let mut best_idx: usize = !0;
+
     for turn in 0..TURN {
         eprintln!("turn: {}", turn);
 
@@ -957,21 +968,10 @@ fn main() {
         }
         eprintln!("candidates: {}\n", solver.leaf.len());
 
-        if _top_cands.is_empty() {
-            solver.cur_node = solver.leaf[0];
-            let final_path = solver.restore(solver.cur_node);
-            eprintln!("path: {:?}", final_path);
-            for op in final_path {
-                actions.push(OP[op]);
-            }
-            write_output(actions.clone());
-        }
-        assert!(!_top_cands.is_empty());
-
         // 最も良いスコアが 0 になった場合に終了
+        assert!(!_top_cands.is_empty());
         if _top_cands[0].eval_score == 0 {
-            assert!(_top_cands[0].eval_score >= 0);
-            solver.update(top_cands);
+            best_idx = _top_cands[0].parent;
             break;
         }
         
@@ -980,17 +980,11 @@ fn main() {
     }
 
     // 最終状態の復元
-    solver.cur_node = solver.leaf[0];
-    let final_path = solver.restore(solver.cur_node);
+    assert!(best_idx != !0);
+    let final_path = solver.restore(best_idx);
     for op in final_path {
         actions.push(OP[op]);
     }
-    // 最後の帳尻合わせ
-    actions.push('.');
-    actions.push('.');
-    actions.push('.');
-    actions.push('.');
-    actions.push('Q');
 
     write_output(actions)
 }
