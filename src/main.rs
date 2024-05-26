@@ -2,70 +2,6 @@ use proconio::*;
 use std::collections::{HashMap, HashSet};
 use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
-use std::cmp::min;
-
-#[derive(Debug, Clone, PartialEq)]
-struct ZobristHashSet<S: std::hash::Hash + Eq + Clone> {
-    v: i64,
-    x_to_hash: HashMap<S, i64>,
-    rng: StdRng,
-}
-
-impl<S: std::hash::Hash + Eq + Clone> ZobristHashSet<S> {
-    pub fn new() -> Self {
-        let seed: [u8; 32] = rand::random();
-        let rng = SeedableRng::from_seed(seed);
-        ZobristHashSet {
-            v: 0,
-            x_to_hash: HashMap::new(),
-            rng,
-        }
-    }
-
-    pub fn flip(&mut self, x: S) {
-        let hash_value = self.x_to_hash.entry(x.clone()).or_insert_with(|| {
-            self.rng.gen_range(i64::MIN..=i64::MAX)
-        });
-        self.v ^= *hash_value;
-    }
-
-    pub fn init(&mut self) {
-        self.v = 0;
-    }
-
-    pub fn get(&self) -> i64 {
-        self.v
-    }
-}
-
-pub fn get_time() -> f64 {
-    static mut STIME: f64 = -1.0;
-    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
-    let ms = t.as_secs() as f64 + t.subsec_nanos() as f64 * 1e-9;
-    unsafe {
-        if STIME < 0.0 {
-            STIME = ms;
-        }
-        /* ローカル環境とジャッジ環境の実行速度差はget_timeで吸収しておくと便利 */
-        #[cfg(feature = "local")]
-        {
-            (ms - STIME) * 0.8
-        }
-        #[cfg(not(feature = "local"))]
-        {
-            ms - STIME
-        }
-    }
-}
-/* ⇓ ========== ここから本実装 ========== ⇓ */
-
-/*  right | down | left | up */
-enum Direction {
-    Right,
-    Down,
-    Left,
-    Up,
-}
 
 enum Operation {
     Right,
@@ -86,8 +22,8 @@ const DIR: [char; DIR_NUM] = ['R', 'D', 'L', 'U'];
 const OP_NUM: usize = 7;
 const OP: [char; OP_NUM] = ['R', 'D', 'L', 'U', 'P', 'Q', '.'];
 
-const MAX_WIDTH: usize = 2000;
-const TURN: usize = 1500;
+const MAX_WIDTH: usize = 5000;
+const TURN: usize = 1000;
 const USING_CRANE: usize = 5;
 
 #[inline]
@@ -310,40 +246,40 @@ impl Crane {
         let nx = nx as usize;
         let ny = ny as usize;
 
-        // let pre_hash = self.zobrist.get();
-        // self.zobrist.flip((
-        //     self.x,
-        //     self.y,
-        //     self.suspended as usize,
-        //     grid_cont[self.x][self.y][0],
-        //     self.pre_op as i64
-        // ));
-        // self.zobrist.flip((
-        //     nx,
-        //     ny,
-        //     self.suspended as usize,
-        //     grid_cont[nx][ny][0],
-        //     dir as i64
-        // ));
-        // if self.hash_set.contains(&self.zobrist.get()) {
-        //     // 既に同じ状態に遷移している場合は NG
-        //     return false;
-        // }
-        // self.zobrist.flip((
-        //     nx,
-        //     ny,
-        //     self.suspended as usize,
-        //     grid_cont[nx][ny][0],
-        //     dir as i64
-        // ));
-        // self.zobrist.flip((
-        //     self.x,
-        //     self.y,
-        //     self.suspended as usize,
-        //     grid_cont[self.x][self.y][0],
-        //     self.pre_op as i64
-        // ));
-        // assert!(pre_hash == self.zobrist.get());
+        let pre_hash = self.zobrist.get();
+        self.zobrist.flip((
+            self.x,
+            self.y,
+            self.suspended as usize,
+            grid_cont[self.x][self.y][0],
+            self.pre_op as i64
+        ));
+        self.zobrist.flip((
+            nx,
+            ny,
+            self.suspended as usize,
+            grid_cont[nx][ny][0],
+            dir as i64
+        ));
+        if self.hash_set.contains(&self.zobrist.get()) {
+            // 既に同じ状態に遷移している場合は NG
+            return false;
+        }
+        self.zobrist.flip((
+            nx,
+            ny,
+            self.suspended as usize,
+            grid_cont[nx][ny][0],
+            dir as i64
+        ));
+        self.zobrist.flip((
+            self.x,
+            self.y,
+            self.suspended as usize,
+            grid_cont[self.x][self.y][0],
+            self.pre_op as i64
+        ));
+        assert!(pre_hash == self.zobrist.get());
 
         if grid_crane[nx][ny] != -1 {
             // 移動先にクレーンがいる場合は NG
@@ -364,13 +300,13 @@ impl Crane {
         }
 
         // 1,2 のクレーンは右半分、3,4 のクレーンは左半分以外に移動しようとしている場合は NG
-        // ※ ただ 15 個以上排出出来ている場合は 3,4 でも右半分に移動可能
-        if 3 <= self.idx && ny > self.w / 2 && out_cnt < 15 {
-            return false;
-        }
-        if 1 <= self.idx && self.idx < 3  && ny < self.w / 2 {
-            return false;
-        }
+        // ※ ただ 10 個以上排出出来ている場合は 3,4 でも右半分に移動可能
+        // if 3 <= self.idx && ny > self.w / 2 && out_cnt < 10 {
+        //     return false;
+        // }
+        // if 1 <= self.idx && self.idx < 3  && ny < self.w / 2 && out_cnt < 15 {
+        //     return false;
+        // }
         true
     }
 
@@ -384,40 +320,40 @@ impl Crane {
             return false;
         }
 
-        // let pre_hash = self.zobrist.get();
-        // self.zobrist.flip((
-        //     self.x,
-        //     self.y,
-        //     false as usize,
-        //     grid_cont[self.x][self.y][0],
-        //     self.pre_op as i64
-        // ));
-        // self.zobrist.flip((
-        //     self.x,
-        //     self.y,
-        //     true as usize,
-        //     grid_cont[self.x][self.y][0],
-        //     Operation::Suspend as i64
-        // ));
-        // if self.hash_set.contains(&self.zobrist.get()) {
-        //     // 既に同じ状態に遷移している場合は NG
-        //     return false;
-        // }
-        // self.zobrist.flip((
-        //     self.x,
-        //     self.y,
-        //     false as usize,
-        //     grid_cont[self.x][self.y][0],
-        //     self.pre_op as i64
-        // ));
-        // self.zobrist.flip((
-        //     self.x,
-        //     self.y,
-        //     true as usize,
-        //     grid_cont[self.x][self.y][0],
-        //     Operation::Suspend as i64
-        // ));
-        // assert!(pre_hash == self.zobrist.get());
+        let pre_hash = self.zobrist.get();
+        self.zobrist.flip((
+            self.x,
+            self.y,
+            false as usize,
+            grid_cont[self.x][self.y][0],
+            self.pre_op as i64
+        ));
+        self.zobrist.flip((
+            self.x,
+            self.y,
+            true as usize,
+            grid_cont[self.x][self.y][0],
+            Operation::Suspend as i64
+        ));
+        if self.hash_set.contains(&self.zobrist.get()) {
+            // 既に同じ状態に遷移している場合は NG
+            return false;
+        }
+        self.zobrist.flip((
+            self.x,
+            self.y,
+            false as usize,
+            grid_cont[self.x][self.y][0],
+            self.pre_op as i64
+        ));
+        self.zobrist.flip((
+            self.x,
+            self.y,
+            true as usize,
+            grid_cont[self.x][self.y][0],
+            Operation::Suspend as i64
+        ));
+        assert!(pre_hash == self.zobrist.get());
 
         if grid_cont[self.x][self.y][0] == -1 {
             // 吊り上げるコンテナがない場合は NG
@@ -447,40 +383,40 @@ impl Crane {
             return false;
         }
         
-        // let pre_hash = self.zobrist.get();
-        // self.zobrist.flip((
-        //     self.x,
-        //     self.y,
-        //     true as usize,
-        //     grid_cont[self.x][self.y][0],
-        //     self.pre_op as i64
-        // ));
-        // self.zobrist.flip((
-        //     self.x,
-        //     self.y,
-        //     false as usize,
-        //     grid_cont[self.x][self.y][0],
-        //     Operation::Suspend as i64
-        // ));
-        // if self.hash_set.contains(&self.zobrist.get()) {
-        //     // 既に同じ状態に遷移している場合は NG
-        //     return false;
-        // }
-        // self.zobrist.flip((
-        //     self.x,
-        //     self.y,
-        //     true as usize,
-        //     grid_cont[self.x][self.y][0],
-        //     self.pre_op as i64
-        // ));
-        // self.zobrist.flip((
-        //     self.x,
-        //     self.y,
-        //     false as usize,
-        //     grid_cont[self.x][self.y][0],
-        //     Operation::Suspend as i64
-        // ));
-        // assert!(pre_hash == self.zobrist.get());
+        let pre_hash = self.zobrist.get();
+        self.zobrist.flip((
+            self.x,
+            self.y,
+            true as usize,
+            grid_cont[self.x][self.y][0],
+            self.pre_op as i64
+        ));
+        self.zobrist.flip((
+            self.x,
+            self.y,
+            false as usize,
+            grid_cont[self.x][self.y][0],
+            Operation::Suspend as i64
+        ));
+        if self.hash_set.contains(&self.zobrist.get()) {
+            // 既に同じ状態に遷移している場合は NG
+            return false;
+        }
+        self.zobrist.flip((
+            self.x,
+            self.y,
+            true as usize,
+            grid_cont[self.x][self.y][0],
+            self.pre_op as i64
+        ));
+        self.zobrist.flip((
+            self.x,
+            self.y,
+            false as usize,
+            grid_cont[self.x][self.y][0],
+            Operation::Suspend as i64
+        ));
+        assert!(pre_hash == self.zobrist.get());
 
         if self.big && grid_cont[self.x][self.y][0] != -1 {
             // 大クレーンで吊り下げ中で、降ろす場所にコンテナがある場合は NG
@@ -498,40 +434,40 @@ impl Crane {
     }
 
     fn stop_ok(&mut self, grid_cont: &[Vec<Vec<i64>>]) -> bool {
-        // let pre_hash = self.zobrist.get();
-        // self.zobrist.flip((
-        //     self.x,
-        //     self.y,
-        //     self.suspended as usize,
-        //     grid_cont[self.x][self.y][0],
-        //     self.pre_op as i64
-        // ));
-        // self.zobrist.flip((
-        //     self.x,
-        //     self.y,
-        //     self.suspended as usize,
-        //     grid_cont[self.x][self.y][0],
-        //     Operation::Stop as i64
-        // ));
-        // if self.hash_set.contains(&self.zobrist.get()) {
-        //     // 既に同じ状態に遷移している場合は NG
-        //     return false;
-        // }
-        // self.zobrist.flip((
-        //     self.x,
-        //     self.y,
-        //     self.suspended as usize,
-        //     grid_cont[self.x][self.y][0],
-        //     self.pre_op as i64
-        // ));
-        // self.zobrist.flip((
-        //     self.x,
-        //     self.y,
-        //     self.suspended as usize,
-        //     grid_cont[self.x][self.y][0],
-        //     Operation::Stop as i64
-        // ));
-        // assert!(pre_hash == self.zobrist.get());
+        let pre_hash = self.zobrist.get();
+        self.zobrist.flip((
+            self.x,
+            self.y,
+            self.suspended as usize,
+            grid_cont[self.x][self.y][0],
+            self.pre_op as i64
+        ));
+        self.zobrist.flip((
+            self.x,
+            self.y,
+            self.suspended as usize,
+            grid_cont[self.x][self.y][0],
+            Operation::Stop as i64
+        ));
+        if self.hash_set.contains(&self.zobrist.get()) {
+            // 既に同じ状態に遷移している場合は NG
+            return false;
+        }
+        self.zobrist.flip((
+            self.x,
+            self.y,
+            self.suspended as usize,
+            grid_cont[self.x][self.y][0],
+            self.pre_op as i64
+        ));
+        self.zobrist.flip((
+            self.x,
+            self.y,
+            self.suspended as usize,
+            grid_cont[self.x][self.y][0],
+            Operation::Stop as i64
+        ));
+        assert!(pre_hash == self.zobrist.get());
 
         // stop はターン管理が難しいので一旦 false
         false
@@ -637,7 +573,31 @@ impl Terminal {
                 // そのターンに何を搬入したかを履歴として持つ
                 self.incoming_cont_turn[self.turn].push(i);
 
-                // 次に搬入すべきコンテナに更新
+                // 差分更新でスコア更新
+                for j in self.incoming_cont_idx[i]..self.w {
+                    let px = i as i64;
+                    let gx = self.conts[i][j] / self.h as i64;
+                    let perm = self.conts[i][j] % self.h as i64;
+    
+                    let npy1 = -(j as i64 - self.incoming_cont_idx[i] as i64 + 1);
+                    let npy2 = npy1 + 1;
+    
+                    let mut sub = 0;
+                    let mut add = 0;
+    
+                    // x 方向の寄与
+                    sub += (px - gx).abs() * (px - gx).abs();
+                    add += (px - gx).abs() * (px - gx).abs();
+                    // y 方向の寄与
+                    sub += (npy1 - (self.w - 1) as i64).abs() * (npy1 - (self.w - 1) as i64).abs();
+                    add += (npy2 - (self.w - 1) as i64).abs() * (npy2 - (self.w - 1) as i64).abs();
+                    // 倍率
+                    sub *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
+                    add *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
+                    self.score += add - sub;
+                }
+
+                // 次に搬入すべきコンテナを更新
                 self.incoming_cont_idx[i] += 1;
             }
         }
@@ -652,6 +612,30 @@ impl Terminal {
 
             // 次に搬入すべきコンテナを戻す
             self.incoming_cont_idx[i] -= 1;
+
+            // 差分更新でスコア更新
+            for j in self.incoming_cont_idx[i]..self.w {
+                let px = i as i64;
+                let gx = self.conts[i][j] / self.h as i64;
+                let perm = self.conts[i][j] % self.h as i64;
+
+                let npy1 = -(j as i64 - self.incoming_cont_idx[i] as i64 + 1);
+                let npy2 = npy1 + 1;
+
+                let mut sub = 0;
+                let mut add = 0;
+
+                // x 方向の寄与
+                sub += (px - gx).abs() * (px - gx).abs();
+                add += (px - gx).abs() * (px - gx).abs();
+                // y 方向の寄与
+                sub += (npy2 - (self.w - 1) as i64).abs() * (npy2 - (self.w - 1) as i64).abs();
+                add += (npy1 - (self.w - 1) as i64).abs() * (npy1 - (self.w - 1) as i64).abs();
+                // 倍率
+                sub *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
+                add *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
+                self.score += add - sub;
+            }
         }
         self.incoming_cont_turn[self.turn].clear();
     }
@@ -699,6 +683,35 @@ impl Terminal {
     fn apply(&mut self, node: &Node) {
         let action = node.op;
 
+        // 差分更新でスコア更新
+        if action < 4 && self.cranes[self.turn % USING_CRANE].suspended {
+            let crane = &self.cranes[self.turn % USING_CRANE];
+
+            let px = crane.x as i64;
+            let py = crane.y as i64;
+            let nx = crane.x as i64 + DX[action] as i64;
+            let ny = crane.y as i64 + DY[action] as i64;
+            
+            let cont = self.grid_cont[px as usize][py as usize][crane.big as usize];
+            assert!(cont >= 0, "suspended cont is not found");
+            let gx = cont / self.h as i64;
+            let perm = cont % self.h as i64;
+
+            let mut sub: i64 = 0;
+            let mut add: i64 = 0;
+            
+            // x 方向の寄与
+            sub += (px - gx).abs() * (px - gx).abs();
+            add += (nx - gx).abs() * (nx - gx).abs();
+            // y 方向の寄与
+            sub += (py - (self.w - 1) as i64).abs() * (py - (self.w - 1) as i64).abs();
+            add += (ny - (self.w - 1) as i64).abs() * (ny - (self.w - 1) as i64).abs();
+            // 倍率
+            sub *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
+            add *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
+            self.score += add - sub;
+        }
+
         self.cranes[self.turn % USING_CRANE].action(
             action,
             &mut self.grid_crane,
@@ -710,8 +723,6 @@ impl Terminal {
         self.carry_out_cont();
         self.prepare_cont();
         self.turn += 1;
-        
-        self.score = self.evaluate();
 
         // eprintln!("===== apply =====");
         // eprintln!("turn: {}, score: {}, op: {}", self.turn, self.score, OP[action]);
@@ -737,19 +748,48 @@ impl Terminal {
 
     /* 前のノードに遷移する関数 */
     fn revert(&mut self, node: &Node) {
-        let action = node.op;
+        let action = reverse_op(node.op) as usize;
 
         self.turn -= 1;
         self.prepare_cont_revert();
         self.carry_out_cont_revert();
         self.cranes[self.turn % USING_CRANE].action(
-            reverse_op(action) as usize,
+            action,
             &mut self.grid_crane,
             &mut self.grid_cont,
             &mut self.cont_suspended,
             &mut self.cont_grid,
             &mut self.crane_grid,
         );
+
+        // 差分更新でスコア更新
+        if action < 4 && self.cranes[self.turn % USING_CRANE].suspended {
+            let crane = &self.cranes[self.turn % USING_CRANE];
+
+            let px = crane.x as i64;
+            let py = crane.y as i64;
+            let nx = crane.x as i64 + DX[node.op] as i64;
+            let ny = crane.y as i64 + DY[node.op] as i64;
+            
+            let cont = self.grid_cont[px as usize][py as usize][crane.big as usize];
+            assert!(cont >= 0, "suspended cont is not found");
+            let gx = cont / self.h as i64;
+            let perm = cont % self.h as i64;
+
+            let mut sub: i64 = 0;
+            let mut add: i64 = 0;
+            
+            // x 方向の寄与
+            sub += (nx - gx).abs() * (nx - gx).abs();
+            add += (px - gx).abs() * (px - gx).abs();
+            // y 方向の寄与
+            sub += (ny - (self.w - 1) as i64).abs() * (ny - (self.w - 1) as i64).abs();
+            add += (py - (self.w - 1) as i64).abs() * (py - (self.w - 1) as i64).abs();
+            // 倍率
+            sub *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
+            add *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
+            self.score += add - sub;
+        }
 
         // eprintln!("===== revert =====");
         // eprintln!("turn: {}, score: {}, op: {}", self.turn, self.score, OP[action]);
@@ -779,7 +819,6 @@ impl Terminal {
         目的地点とコンテナの二乗距離を d として、∑_{i,j} d(i,j) * 10^{何番目に搬出すべきか} の最小化を目指す
         */
         let mut score = 0;
-        let mut nonexist_cont = 0;
         for i in 0..self.h {
             for j in 0..self.w {
                 for k in 0..2 {
@@ -792,17 +831,13 @@ impl Terminal {
                         // y 方向の寄与
                         add += (j as i64 - (self.w - 1) as i64).abs() * (j as i64 - (self.w - 1) as i64).abs();
                         // 倍率
-                        add *= 10_i64.pow(2 * (self.w as i64 - perm) as u32);
+                        add *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
                         score += add;
-                    }
-                    else {
-                        nonexist_cont += 1;
                     }
                 }
             }
         }
         // 盤面に存在しないコンテナの距離を考慮
-        // score += nonexist_cont * 1000000000;
         for i in 0..self.h {
             for j in self.incoming_cont_idx[i]..self.w {
                 let gx = self.conts[i][j] / self.h as i64;
@@ -814,13 +849,9 @@ impl Terminal {
                 // y 方向の寄与
                 add += ( -(j as i64 - self.incoming_cont_idx[i] as i64 + 1) - (self.w - 1) as i64).abs() * ( -(j as i64 - self.incoming_cont_idx[i] as i64 + 1) - (self.w - 1) as i64).abs();
                 // 倍率
-                add *= 10_i64.pow(2 * (self.w as i64 - perm) as u32);
+                add *= 10_i64.pow((self.w as i64 - perm) as u32 + 1);
                 score += add;
             }
-        }
-        // 同スコアの差別化として、全クレーンの y 座標を考慮（搬出口に近い方が良い）
-        for i in 0..USING_CRANE {
-            score += self.cranes[i].y as i64;
         }
 
         score
@@ -923,39 +954,6 @@ impl BeamSearch {
         }
     }
 
-        // dfsで木を走査
-    // 一本道の場合戻る必要はないのでそれをsingleで管理
-    fn dfs(&mut self, cands: &mut Vec<Cand>, single: bool){
-        if self.nodes[self.cur_node].child==!0{
-            self.append_cands(self.cur_node,cands);
-            return;
-        }
-
-        let node=self.cur_node;
-        let mut child=self.nodes[node].child;
-        let next_single=single&(self.nodes[child].next==!0);
-
-        // let prev_state=self.state.clone();
-        loop{
-            self.cur_node=child;
-            self.state.apply(&self.nodes[child]);
-            self.dfs(cands,next_single);
-
-            if !next_single{
-                self.state.revert(&self.nodes[child]);
-                // assert!(prev_state==self.state);
-            }
-            child=self.nodes[child].next;
-            if child==!0{
-                break;
-            }
-        }
-        
-        if !next_single{
-            self.cur_node=node;
-        }
-    }
-
     // 走査の非再帰実装
     fn no_dfs(&mut self, cands: &mut Vec<Cand>) {
         // 1本道でなくなるまで潜る
@@ -995,7 +993,6 @@ impl BeamSearch {
     }
 
     fn enum_cands(&mut self, cands: &mut Vec<Cand>) {
-        // self.dfs(cands, true);
         self.no_dfs(cands);
     }
 
@@ -1037,6 +1034,8 @@ impl BeamSearch {
         let node = &self.nodes[idx];
         assert_eq!(node.child, !0);
 
+        let mut next_exist = false;
+
         for _op in 0..OP_NUM {
             // 前回の逆操作は無視
             if reverse_op(_op) as usize == self.state.cranes[self.state.turn % USING_CRANE].pre_op {
@@ -1063,19 +1062,25 @@ impl BeamSearch {
                 let py = crane.y as i64;
                 let nx = crane.x as i64 + DX[_op] as i64;
                 let ny = crane.y as i64 + DY[_op] as i64;
-
+                
                 let cont = self.state.grid_cont[px as usize][py as usize][crane.big as usize];
-                // eprintln!("px: {}, py: {}, nx: {}, ny: {}, cont: {}, op: {}, crane_id: {}", px, py, nx, ny, cont, _op, self.state.turn % USING_CRANE);
-                // eprintln!("cont_under: {}, cont_upper: {}", self.state.grid_cont[nx as usize][ny as usize][0], self.state.grid_cont[nx as usize][ny as usize][1]);
-                assert!(cont != -1);
+                assert!(cont >= 0, "suspended cont is not found");
                 let gx = cont / self.state.h as i64;
                 let perm = cont % self.state.h as i64;
 
-                // score -= ((px - gx).abs() + (py - (self.state.w - 1) as i64).abs()) * 10_i64.pow(2 * (self.state.w as i64 - perm) as u32);
-                // score += ((nx - gx).abs() + (ny - (self.state.w - 1) as i64).abs()) * 10_i64.pow(2 * (self.state.w as i64 - perm) as u32);
-
-                score -= ((px - gx).abs() + (py - (self.state.w - 1) as i64).abs()) * ((px - gx).abs() + (py - (self.state.w - 1) as i64).abs()) * 10_i64.pow(2 * (self.state.w as i64 - perm) as u32);
-                score += ((nx - gx).abs() + (ny - (self.state.w - 1) as i64).abs()) * ((nx - gx).abs() + (ny - (self.state.w - 1) as i64).abs()) * 10_i64.pow(2 * (self.state.w as i64 - perm) as u32);
+                let mut sub: i64 = 0;
+                let mut add: i64 = 0;
+                
+                // x 方向の寄与
+                sub += (px - gx).abs() * (px - gx).abs();
+                add += (nx - gx).abs() * (nx - gx).abs();
+                // y 方向の寄与
+                sub += (py - (self.state.w - 1) as i64).abs() * (py - (self.state.w - 1) as i64).abs();
+                add += (ny - (self.state.w - 1) as i64).abs() * (ny - (self.state.w - 1) as i64).abs();
+                // 倍率
+                sub *= 10_i64.pow((self.state.w as i64 - perm) as u32 + 1);
+                add *= 10_i64.pow((self.state.w as i64 - perm) as u32 + 1);
+                score += add - sub;
 
                 // suspended && right && py == 0 の時は搬入口から出るコンテナによりそこの評価値変動も考慮
                 if py == 0 && _op == 0 {
@@ -1085,14 +1090,26 @@ impl BeamSearch {
 
                         let npy1 = -(i as i64 - self.state.incoming_cont_idx[px as usize] as i64 + 1);
                         let npy2 = npy1 + 1;
-                        score -= ((px - gx).abs() + (npy1 - (self.state.w - 1) as i64).abs()) * ((px - gx).abs() + (npy1 - (self.state.w - 1) as i64).abs()) * 10_i64.pow(2 * (self.state.w as i64 - perm) as u32);
-                        score += ((nx - gx).abs() + (npy2 - (self.state.w - 1) as i64).abs()) * ((nx - gx).abs() + (npy2 - (self.state.w - 1) as i64).abs()) * 10_i64.pow(2 * (self.state.w as i64 - perm) as u32);
-                        // score -= ((px - gx).abs() + (npy1 - (self.state.w - 1) as i64).abs() * 2) * 10_i64.pow(2 * (self.state.w as i64 - perm) as u32);
-                        // score += ((nx - gx).abs() + (npy2 - (self.state.w - 1) as i64).abs() * 2) * 10_i64.pow(2 * (self.state.w as i64 - perm) as u32);
+
+                        add = 0;
+                        sub = 0;
+                        // x 方向の寄与
+                        sub += (px - gx).abs() * (px - gx).abs();
+                        add += (nx - gx).abs() * (nx - gx).abs();
+                        // y 方向の寄与
+                        sub += (npy1 - (self.state.w - 1) as i64).abs() * (npy1 - (self.state.w - 1) as i64).abs();
+                        add += (npy2 - (self.state.w - 1) as i64).abs() * (npy2 - (self.state.w - 1) as i64).abs();
+                        // 倍率
+                        sub *= 10_i64.pow((self.state.w as i64 - perm) as u32 + 1);
+                        add *= 10_i64.pow((self.state.w as i64 - perm) as u32 + 1);
+                        
+                        score += add - sub;
                     }
                 }
+                assert!(score >= 0, "score is negative. score: {}", score);
             }
 
+            next_exist = true;
             cands.push(
                 Cand {
                     op: _op,
@@ -1102,6 +1119,19 @@ impl BeamSearch {
                 }
             );
         }
+
+        if !next_exist {
+            // 次の遷移が無い場合は仕方なく stop を挟む
+            cands.push(
+                Cand {
+                    op: 6,
+                    parent: idx,
+                    eval_score: self.state.score,
+                    hash: 0,
+                }
+            );
+        }
+
     }
 }
 
@@ -1132,8 +1162,8 @@ fn main() {
     };
     
     let mut initial_terminal = Terminal::new(&input);
-    // let mut actions: String = "".to_string();
-    let mut actions: String = "RRRRRRRRRR".to_string();
+    let mut actions: String = "".to_string();
+    // let mut actions: String = "PPPPPRRRRRRRRRRRRRRRQQQQQLLLLL".to_string();
     for (i, action) in actions.chars().enumerate() {
         initial_terminal.prepare_cont();
         initial_terminal.cranes[i % 5].action(
@@ -1145,7 +1175,6 @@ fn main() {
             &mut initial_terminal.crane_grid,
         );
     }
-    actions = "".to_string();
     initial_terminal.prepare_cont();
     initial_terminal.incoming_cont_turn[0].clear();
     initial_terminal.score = initial_terminal.evaluate();
@@ -1161,7 +1190,7 @@ fn main() {
     );
     eprintln!("initial score: {}", solver.state.score);
 
-    for turn in 0..TURN / 2 {
+    for turn in 0..TURN {
         eprintln!("turn: {}", turn);
 
         // 候補リストを生成
@@ -1179,10 +1208,22 @@ fn main() {
         }
         eprintln!("candidates: {}\n", solver.leaf.len());
 
-        // 最も良いスコアが 0 になった場合に終了
+        if _top_cands.is_empty() {
+            solver.cur_node = solver.leaf[0];
+            let final_path = solver.restore(solver.cur_node);
+            eprintln!("path: {:?}", final_path);
+            for op in final_path {
+                actions.push(OP[op]);
+            }
+            write_output(actions.clone());
+        }
         assert!(!_top_cands.is_empty());
-        if _top_cands[0].eval_score == 0 {
-            solver.cur_node = _top_cands[0].parent;
+
+        // 最も良いスコアが 20 以下（クレーンの y 座標総和以下）になった場合に終了
+
+        if _top_cands[0].eval_score <= 20 {
+            assert!(_top_cands[0].eval_score >= 0);
+            solver.update(top_cands);
             break;
         }
         
@@ -1193,10 +1234,51 @@ fn main() {
     // 最終状態の復元
     solver.cur_node = solver.leaf[0];
     let final_path = solver.restore(solver.cur_node);
-    eprintln!("path: {:?}", final_path);
     for op in final_path {
         actions.push(OP[op]);
     }
+    // 最後の帳尻合わせ
+    actions.push('.');
+    actions.push('.');
+    actions.push('.');
+    actions.push('.');
+    actions.push('Q');
 
     write_output(actions)
+}
+
+/* ========== 以下ライブラリ ========== */
+
+#[derive(Debug, Clone, PartialEq)]
+struct ZobristHashSet<S: std::hash::Hash + Eq + Clone> {
+    v: i64,
+    x_to_hash: HashMap<S, i64>,
+    rng: StdRng,
+}
+
+impl<S: std::hash::Hash + Eq + Clone> ZobristHashSet<S> {
+    pub fn new() -> Self {
+        let seed: [u8; 32] = rand::random();
+        let rng = SeedableRng::from_seed(seed);
+        ZobristHashSet {
+            v: 0,
+            x_to_hash: HashMap::new(),
+            rng,
+        }
+    }
+
+    pub fn flip(&mut self, x: S) {
+        let hash_value = self.x_to_hash.entry(x.clone()).or_insert_with(|| {
+            self.rng.gen_range(i64::MIN..=i64::MAX)
+        });
+        self.v ^= *hash_value;
+    }
+
+    pub fn init(&mut self) {
+        self.v = 0;
+    }
+
+    pub fn get(&self) -> i64 {
+        self.v
+    }
 }
