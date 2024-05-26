@@ -2,6 +2,7 @@ use proconio::*;
 use std::collections::{HashMap, HashSet};
 use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use std::cmp::min;
 
 #[derive(Debug, Clone, PartialEq)]
 struct ZobristHashSet<S: std::hash::Hash + Eq + Clone> {
@@ -85,9 +86,9 @@ const DIR: [char; DIR_NUM] = ['R', 'D', 'L', 'U'];
 const OP_NUM: usize = 7;
 const OP: [char; OP_NUM] = ['R', 'D', 'L', 'U', 'P', 'Q', '.'];
 
-const MAX_WIDTH: usize = 10000;
-const TURN: usize = 1000;
-const USING_CRANE: usize = 2;
+const MAX_WIDTH: usize = 2000;
+const TURN: usize = 1500;
+const USING_CRANE: usize = 5;
 
 #[inline]
 /* 反対の方向を返す関数 */
@@ -179,6 +180,8 @@ impl Crane {
         dir: usize,
         grid_crane: &mut [Vec<isize>],
         grid_cont: &mut [Vec<Vec<i64>>],
+        cont_grid: &mut [(usize, usize, usize)],
+        crane_grid: &mut [(usize, usize)],
         cont_suspended: &mut [Vec<Vec<bool>>],
     ) -> char {
         self.hash_flip(grid_cont);
@@ -188,6 +191,8 @@ impl Crane {
         grid_crane[self.x][self.y] = -1;
 
         if self.suspended {
+            cont_grid[grid_cont[self.x][self.y][self.big as usize] as usize] = (nx, ny, self.suspended as usize);
+            crane_grid[self.idx] = (nx, ny);
             grid_cont[nx][ny][self.big as usize] = grid_cont[self.x][self.y][self.big as usize];
             grid_cont[self.x][self.y][self.big as usize] = -1;
             cont_suspended[nx][ny][self.big as usize] = true;
@@ -199,9 +204,6 @@ impl Crane {
         self.pre_op = dir;
         self.hash_flip(grid_cont);
         self.hash_set.insert(self.zobrist.get());
-        if self.suspended {
-            assert!(grid_cont[self.x][self.y][0] != -1 || grid_cont[self.x][self.y][1] != -1);
-        }
         DIR[dir]
     }
 
@@ -209,20 +211,19 @@ impl Crane {
         &mut self,
         grid_cont: &mut [Vec<Vec<i64>>],
         cont_suspended: &mut [Vec<Vec<bool>>],
+        cont_grid: &mut [(usize, usize, usize)],
     ) -> char {
         self.hash_flip(grid_cont);
         self.suspended = true;
         cont_suspended[self.x][self.y][self.big as usize] = true;
         if self.big {
+            assert!(grid_cont[self.x][self.y][0] != -1);
+            cont_grid[grid_cont[self.x][self.y][0] as usize] = (self.x, self.y, self.suspended as usize);
             grid_cont[self.x][self.y].swap(0, 1);
         }
         self.pre_op = Operation::Suspend as usize;
         self.hash_flip(grid_cont);
         self.hash_set.insert(self.zobrist.get());
-
-        if self.suspended {
-            assert!(grid_cont[self.x][self.y][0] != -1 || grid_cont[self.x][self.y][1] != -1);
-        }
         'P'
     }
 
@@ -230,19 +231,19 @@ impl Crane {
         &mut self,
         grid_cont: &mut [Vec<Vec<i64>>],
         cont_suspended: &mut [Vec<Vec<bool>>],
+        cont_grid: &mut [(usize, usize, usize)]
     ) -> char {
         self.hash_flip(grid_cont);
         self.suspended = false;
         cont_suspended[self.x][self.y][self.big as usize] = false;
         if self.big {
+            assert!(grid_cont[self.x][self.y][1] != -1);
+            cont_grid[grid_cont[self.x][self.y][1] as usize] = (self.x, self.y, self.suspended as usize);
             grid_cont[self.x][self.y].swap(0, 1);
         }
         self.pre_op = Operation::Lower as usize;
         self.hash_flip(grid_cont);
         self.hash_set.insert(self.zobrist.get());
-        if self.suspended {
-            assert!(grid_cont[self.x][self.y][0] != -1 || grid_cont[self.x][self.y][1] != -1);
-        }
         'Q'
     }
 
@@ -251,9 +252,6 @@ impl Crane {
         self.pre_op = Operation::Stop as usize;
         self.hash_flip(grid_cont);
         self.hash_set.insert(self.zobrist.get());
-        if self.suspended {
-            assert!(grid_cont[self.x][self.y][0] != -1 || grid_cont[self.x][self.y][1] != -1);
-        }
         '.'
     }
 
@@ -278,11 +276,13 @@ impl Crane {
         grid_crane: &mut [Vec<isize>],
         grid_cont: &mut [Vec<Vec<i64>>],
         cont_suspended: &mut [Vec<Vec<bool>>],
+        cont_grid: &mut [(usize, usize, usize)],
+        crane_grid: &mut [(usize, usize)],
     ) -> char {
         match action {
-            0..=3 => self.shift(action, grid_crane, grid_cont, cont_suspended),
-            4 => self.suspend(grid_cont, cont_suspended),
-            5 => self.lower(grid_cont, cont_suspended),
+            0..=3 => self.shift(action, grid_crane, grid_cont, cont_grid, crane_grid, cont_suspended),
+            4 => self.suspend(grid_cont, cont_suspended, cont_grid),
+            5 => self.lower(grid_cont, cont_suspended, cont_grid),
             6 => self.stop(grid_cont),
             7 => self.explode(grid_cont, grid_crane),
             _ => panic!("invalid action"),
@@ -295,6 +295,7 @@ impl Crane {
         grid_crane: &[Vec<isize>],
         grid_cont: &[Vec<Vec<i64>>],
         out_cont_idx: &[usize],
+        out_cnt: usize,
     ) -> bool {
         if self.exploded {
             // 既に爆破している場合は NG
@@ -309,40 +310,40 @@ impl Crane {
         let nx = nx as usize;
         let ny = ny as usize;
 
-        let pre_hash = self.zobrist.get();
-        self.zobrist.flip((
-            self.x,
-            self.y,
-            self.suspended as usize,
-            grid_cont[self.x][self.y][self.big as usize],
-            self.pre_op as i64
-        ));
-        self.zobrist.flip((
-            nx,
-            ny,
-            self.suspended as usize,
-            grid_cont[nx][ny][self.big as usize],
-            dir as i64
-        ));
-        if self.hash_set.contains(&self.zobrist.get()) {
-            // 既に同じ状態に遷移している場合は NG
-            return false;
-        }
-        self.zobrist.flip((
-            nx,
-            ny,
-            self.suspended as usize,
-            grid_cont[nx][ny][self.big as usize],
-            dir as i64
-        ));
-        self.zobrist.flip((
-            self.x,
-            self.y,
-            self.suspended as usize,
-            grid_cont[self.x][self.y][self.big as usize],
-            self.pre_op as i64
-        ));
-        assert!(pre_hash == self.zobrist.get());
+        // let pre_hash = self.zobrist.get();
+        // self.zobrist.flip((
+        //     self.x,
+        //     self.y,
+        //     self.suspended as usize,
+        //     grid_cont[self.x][self.y][0],
+        //     self.pre_op as i64
+        // ));
+        // self.zobrist.flip((
+        //     nx,
+        //     ny,
+        //     self.suspended as usize,
+        //     grid_cont[nx][ny][0],
+        //     dir as i64
+        // ));
+        // if self.hash_set.contains(&self.zobrist.get()) {
+        //     // 既に同じ状態に遷移している場合は NG
+        //     return false;
+        // }
+        // self.zobrist.flip((
+        //     nx,
+        //     ny,
+        //     self.suspended as usize,
+        //     grid_cont[nx][ny][0],
+        //     dir as i64
+        // ));
+        // self.zobrist.flip((
+        //     self.x,
+        //     self.y,
+        //     self.suspended as usize,
+        //     grid_cont[self.x][self.y][0],
+        //     self.pre_op as i64
+        // ));
+        // assert!(pre_hash == self.zobrist.get());
 
         if grid_crane[nx][ny] != -1 {
             // 移動先にクレーンがいる場合は NG
@@ -362,60 +363,76 @@ impl Crane {
             return false;
         }
 
-        if self.suspended {
-            assert!(grid_cont[self.x][self.y][0] != -1 || grid_cont[self.x][self.y][1] != -1);
+        // 1,2 のクレーンは右半分、3,4 のクレーンは左半分以外に移動しようとしている場合は NG
+        // ※ ただ 15 個以上排出出来ている場合は 3,4 でも右半分に移動可能
+        if 3 <= self.idx && ny > self.w / 2 && out_cnt < 15 {
+            return false;
+        }
+        if 1 <= self.idx && self.idx < 3  && ny < self.w / 2 {
+            return false;
         }
         true
     }
 
-    fn suspend_ok(&mut self, grid_cont: &[Vec<Vec<i64>>]) -> bool {
+    fn suspend_ok(
+        &mut self,
+        grid_cont: &[Vec<Vec<i64>>],
+        out_cont_idx: &[usize]
+    ) -> bool {
         if self.exploded || self.suspended {
             // 既に爆破している場合や吊り上げている場合は NG
             return false;
         }
 
-        let pre_hash = self.zobrist.get();
-        self.zobrist.flip((
-            self.x,
-            self.y,
-            false as usize,
-            grid_cont[self.x][self.y][self.big as usize],
-            self.pre_op as i64
-        ));
-        self.zobrist.flip((
-            self.x,
-            self.y,
-            true as usize,
-            grid_cont[self.x][self.y][self.big as usize],
-            Operation::Suspend as i64
-        ));
-        if self.hash_set.contains(&self.zobrist.get()) {
-            // 既に同じ状態に遷移している場合は NG
-            return false;
-        }
-        self.zobrist.flip((
-            self.x,
-            self.y,
-            false as usize,
-            grid_cont[self.x][self.y][self.big as usize],
-            self.pre_op as i64
-        ));
-        self.zobrist.flip((
-            self.x,
-            self.y,
-            true as usize,
-            grid_cont[self.x][self.y][self.big as usize],
-            Operation::Suspend as i64
-        ));
-        assert!(pre_hash == self.zobrist.get());
+        // let pre_hash = self.zobrist.get();
+        // self.zobrist.flip((
+        //     self.x,
+        //     self.y,
+        //     false as usize,
+        //     grid_cont[self.x][self.y][0],
+        //     self.pre_op as i64
+        // ));
+        // self.zobrist.flip((
+        //     self.x,
+        //     self.y,
+        //     true as usize,
+        //     grid_cont[self.x][self.y][0],
+        //     Operation::Suspend as i64
+        // ));
+        // if self.hash_set.contains(&self.zobrist.get()) {
+        //     // 既に同じ状態に遷移している場合は NG
+        //     return false;
+        // }
+        // self.zobrist.flip((
+        //     self.x,
+        //     self.y,
+        //     false as usize,
+        //     grid_cont[self.x][self.y][0],
+        //     self.pre_op as i64
+        // ));
+        // self.zobrist.flip((
+        //     self.x,
+        //     self.y,
+        //     true as usize,
+        //     grid_cont[self.x][self.y][0],
+        //     Operation::Suspend as i64
+        // ));
+        // assert!(pre_hash == self.zobrist.get());
 
         if grid_cont[self.x][self.y][0] == -1 {
             // 吊り上げるコンテナがない場合は NG
             return false;
         }
 
-        if self.suspended {
-            assert!(grid_cont[self.x][self.y][0] != -1 || grid_cont[self.x][self.y][1] != -1);
+        if self.idx == 0  {
+            // crane 1 の場合は、今すぐ搬出出来るコンテナでない場合は NG
+            let mut flag = false;
+            for i in 0..self.h {
+                flag |= out_cont_idx[i] == grid_cont[self.x][self.y][0] as usize;
+            }
+            if !flag {
+                return false;
+            }
         }
         true
     }
@@ -430,40 +447,40 @@ impl Crane {
             return false;
         }
         
-        let pre_hash = self.zobrist.get();
-        self.zobrist.flip((
-            self.x,
-            self.y,
-            true as usize,
-            grid_cont[self.x][self.y][self.big as usize],
-            self.pre_op as i64
-        ));
-        self.zobrist.flip((
-            self.x,
-            self.y,
-            false as usize,
-            grid_cont[self.x][self.y][self.big as usize],
-            Operation::Suspend as i64
-        ));
-        if self.hash_set.contains(&self.zobrist.get()) {
-            // 既に同じ状態に遷移している場合は NG
-            return false;
-        }
-        self.zobrist.flip((
-            self.x,
-            self.y,
-            true as usize,
-            grid_cont[self.x][self.y][self.big as usize],
-            self.pre_op as i64
-        ));
-        self.zobrist.flip((
-            self.x,
-            self.y,
-            false as usize,
-            grid_cont[self.x][self.y][self.big as usize],
-            Operation::Suspend as i64
-        ));
-        assert!(pre_hash == self.zobrist.get());
+        // let pre_hash = self.zobrist.get();
+        // self.zobrist.flip((
+        //     self.x,
+        //     self.y,
+        //     true as usize,
+        //     grid_cont[self.x][self.y][0],
+        //     self.pre_op as i64
+        // ));
+        // self.zobrist.flip((
+        //     self.x,
+        //     self.y,
+        //     false as usize,
+        //     grid_cont[self.x][self.y][0],
+        //     Operation::Suspend as i64
+        // ));
+        // if self.hash_set.contains(&self.zobrist.get()) {
+        //     // 既に同じ状態に遷移している場合は NG
+        //     return false;
+        // }
+        // self.zobrist.flip((
+        //     self.x,
+        //     self.y,
+        //     true as usize,
+        //     grid_cont[self.x][self.y][0],
+        //     self.pre_op as i64
+        // ));
+        // self.zobrist.flip((
+        //     self.x,
+        //     self.y,
+        //     false as usize,
+        //     grid_cont[self.x][self.y][0],
+        //     Operation::Suspend as i64
+        // ));
+        // assert!(pre_hash == self.zobrist.get());
 
         if self.big && grid_cont[self.x][self.y][0] != -1 {
             // 大クレーンで吊り下げ中で、降ろす場所にコンテナがある場合は NG
@@ -477,52 +494,48 @@ impl Crane {
             return false;
         }
 
-        if self.suspended {
-            assert!(grid_cont[self.x][self.y][0] != -1 || grid_cont[self.x][self.y][1] != -1);
-        }
         true
     }
 
     fn stop_ok(&mut self, grid_cont: &[Vec<Vec<i64>>]) -> bool {
-        let pre_hash = self.zobrist.get();
-        self.zobrist.flip((
-            self.x,
-            self.y,
-            self.suspended as usize,
-            grid_cont[self.x][self.y][self.big as usize],
-            self.pre_op as i64
-        ));
-        self.zobrist.flip((
-            self.x,
-            self.y,
-            self.suspended as usize,
-            grid_cont[self.x][self.y][self.big as usize],
-            Operation::Stop as i64
-        ));
-        if self.hash_set.contains(&self.zobrist.get()) {
-            // 既に同じ状態に遷移している場合は NG
-            return false;
-        }
-        self.zobrist.flip((
-            self.x,
-            self.y,
-            self.suspended as usize,
-            grid_cont[self.x][self.y][self.big as usize],
-            self.pre_op as i64
-        ));
-        self.zobrist.flip((
-            self.x,
-            self.y,
-            self.suspended as usize,
-            grid_cont[self.x][self.y][self.big as usize],
-            Operation::Stop as i64
-        ));
-        assert!(pre_hash == self.zobrist.get());
+        // let pre_hash = self.zobrist.get();
+        // self.zobrist.flip((
+        //     self.x,
+        //     self.y,
+        //     self.suspended as usize,
+        //     grid_cont[self.x][self.y][0],
+        //     self.pre_op as i64
+        // ));
+        // self.zobrist.flip((
+        //     self.x,
+        //     self.y,
+        //     self.suspended as usize,
+        //     grid_cont[self.x][self.y][0],
+        //     Operation::Stop as i64
+        // ));
+        // if self.hash_set.contains(&self.zobrist.get()) {
+        //     // 既に同じ状態に遷移している場合は NG
+        //     return false;
+        // }
+        // self.zobrist.flip((
+        //     self.x,
+        //     self.y,
+        //     self.suspended as usize,
+        //     grid_cont[self.x][self.y][0],
+        //     self.pre_op as i64
+        // ));
+        // self.zobrist.flip((
+        //     self.x,
+        //     self.y,
+        //     self.suspended as usize,
+        //     grid_cont[self.x][self.y][0],
+        //     Operation::Stop as i64
+        // ));
+        // assert!(pre_hash == self.zobrist.get());
 
-        if self.suspended {
-            assert!(grid_cont[self.x][self.y][0] != -1 || grid_cont[self.x][self.y][1] != -1);
-        }
-        true
+        // stop はターン管理が難しいので一旦 false
+        false
+        // true
     }
 
     fn explode_ok(&self) -> bool {
@@ -539,10 +552,11 @@ impl Crane {
         grid_crane: &[Vec<isize>],
         grid_cont: &[Vec<Vec<i64>>],
         out_cont_idx: &[usize],
+        out_cnt: usize,
     ) -> bool {
         match action {
-            0..=3 => self.shift_ok(action, grid_crane, grid_cont, out_cont_idx),
-            4 => self.suspend_ok(grid_cont),
+            0..=3 => self.shift_ok(action, grid_crane, grid_cont, out_cont_idx, out_cnt),
+            4 => self.suspend_ok(grid_cont, out_cont_idx),
             5 => self.lower_ok(grid_cont, out_cont_idx),
             6 => self.stop_ok(grid_cont),
             7 => self.explode_ok(),
@@ -557,6 +571,7 @@ struct Terminal {
     w: usize,
     score: i64,
     turn: usize,
+    out_cnt: usize,                      // 搬出済みのコンテナ数
     hash: u64,                           // Zobrist Hash
     conts: Vec<Vec<i64>>,                // 行 i から j 番目に来るコンテナの index
     out_cont_idx: Vec<usize>,            // 各搬出口から今搬出すべきコンテナの index
@@ -565,8 +580,11 @@ struct Terminal {
     grid_crane: Vec<Vec<isize>>,         // (i, j) にいるクレーンの index
     cranes: Vec<Crane>,                  // 各クレーンの情報
     cont_suspended: Vec<Vec<Vec<bool>>>, // (i, j) にあるコンテナが吊り上げられているか
-
-    out_cont_turn: Vec<Vec<(usize, i64)>>, // 各搬出口から i ターン目に搬出したコンテナの (index, x)
+    
+    cont_grid: Vec<(usize, usize, usize)>, // id が i のコンテナの場所 (x, y, suspended)
+    crane_grid: Vec<(usize, usize)>,       // id が i のクレーンの場所 (x, y)
+    
+    out_cont_turn: Vec<Vec<(usize, i64)>>,   // 各搬出口から i ターン目に搬出したコンテナの (index, x)
     incoming_cont_turn: Vec<Vec<usize>>,     // 各搬入口から i ターン目に搬入したコンテナの (index, x)
 }
 impl Terminal {
@@ -591,6 +609,7 @@ impl Terminal {
             w: input.n,
             score: 0,
             turn: 0,
+            out_cnt: 0,
             hash: 0,
             conts: input.a.to_vec(),
             out_cont_idx: _out_cont_idx,
@@ -599,6 +618,8 @@ impl Terminal {
             grid_crane: _grid_crane,
             cranes: _cranes,
             cont_suspended: vec![vec![vec![false; 2]; input.n]; input.n],
+            cont_grid: vec![(!0, !0, !0); input.n * input.n],
+            crane_grid: vec![(!0, !0); input.n],
             out_cont_turn: vec![vec![]; TURN+1],
             incoming_cont_turn: vec![vec![]; TURN+1],
         }
@@ -611,8 +632,11 @@ impl Terminal {
             if self.grid_cont[i][0][0] == -1 && self.grid_cont[i][0][1] == -1 && self.incoming_cont_idx[i] < self.w {
                 // コンテナを搬入
                 self.grid_cont[i][0][0] = self.conts[i][self.incoming_cont_idx[i]];
+                self.cont_grid[self.grid_cont[i][0][0] as usize] = (i, 0, 0);
+
                 // そのターンに何を搬入したかを履歴として持つ
                 self.incoming_cont_turn[self.turn].push(i);
+
                 // 次に搬入すべきコンテナに更新
                 self.incoming_cont_idx[i] += 1;
             }
@@ -623,7 +647,9 @@ impl Terminal {
     fn prepare_cont_revert(&mut self) {
         for i in self.incoming_cont_turn[self.turn].clone() {
             // 搬入したコンテナをクリア
+            self.cont_grid[self.grid_cont[i][0][0] as usize] = (!0, !0, !0);
             self.grid_cont[i][0][0] = -1;
+
             // 次に搬入すべきコンテナを戻す
             self.incoming_cont_idx[i] -= 1;
         }
@@ -637,10 +663,16 @@ impl Terminal {
             if self.grid_cont[i][self.w-1][0] != -1 && !self.cont_suspended[i][self.w-1][0] {
                 // そのターンに何を搬出したかを履歴として持つ
                 self.out_cont_turn[self.turn].push((i, self.grid_cont[i][self.w-1][0]));
+                
                 // 次に搬出すべきコンテナに更新
                 self.out_cont_idx[i] += 1;
+
                 // 搬出済みなのでコンテナ情報をクリア
+                self.cont_grid[self.grid_cont[i][self.w-1][0] as usize] = (!0, !0, !0);
                 self.grid_cont[i][self.w-1][0] = -1;
+
+                // 搬出したコンテナ数を更新
+                self.out_cnt += 1;
             }
         }
     }
@@ -649,10 +681,16 @@ impl Terminal {
     fn carry_out_cont_revert(&mut self) {
         // for i in self.out_cont_turn[self.turn].clone() {
         for (i, cont_id) in self.out_cont_turn[self.turn].clone() {
+
             // 搬出したコンテナをクリア
             self.grid_cont[i][self.w-1][0] = cont_id;
+            self.cont_grid[cont_id as usize] = (i, self.w-1, 0);
+
             // 次に搬出すべきコンテナを戻す
             self.out_cont_idx[i] -= 1;
+
+            // 搬出したコンテナ数を戻す
+            self.out_cnt -= 1;
         }
         self.out_cont_turn[self.turn].clear();
     }
@@ -666,6 +704,8 @@ impl Terminal {
             &mut self.grid_crane,
             &mut self.grid_cont,
             &mut self.cont_suspended,
+            &mut self.cont_grid,
+            &mut self.crane_grid,
         );
         self.carry_out_cont();
         self.prepare_cont();
@@ -707,9 +747,9 @@ impl Terminal {
             &mut self.grid_crane,
             &mut self.grid_cont,
             &mut self.cont_suspended,
+            &mut self.cont_grid,
+            &mut self.crane_grid,
         );
-
-        self.score = self.evaluate();
 
         // eprintln!("===== revert =====");
         // eprintln!("turn: {}, score: {}, op: {}", self.turn, self.score, OP[action]);
@@ -736,10 +776,10 @@ impl Terminal {
     fn evaluate(&self) -> i64 {
         /*
         ========== 評価関数 ==========
-        目的地点とコンテナのマンハッタン距離を d として、∑_{i,j} d(i,j) * 10^{何番目に搬出すべきか} の最小化を目指す
+        目的地点とコンテナの二乗距離を d として、∑_{i,j} d(i,j) * 10^{何番目に搬出すべきか} の最小化を目指す
         */
-        // 盤面に存在するコンテナの距離を考慮
-        let mut score: i64 = 0;
+        let mut score = 0;
+        let mut nonexist_cont = 0;
         for i in 0..self.h {
             for j in 0..self.w {
                 for k in 0..2 {
@@ -748,17 +788,21 @@ impl Terminal {
                     if self.grid_cont[i][j][k] != -1 {
                         let mut add = 0;
                         // x 方向の寄与
-                        add += (i as i64 - gx).abs();
+                        add += (i as i64 - gx).abs() * (i as i64 - gx).abs();
                         // y 方向の寄与
-                        add += (j as i64 - (self.w - 1) as i64).abs();
+                        add += (j as i64 - (self.w - 1) as i64).abs() * (j as i64 - (self.w - 1) as i64).abs();
                         // 倍率
-                        add *= 10_i64.pow(2 * (self.w as i64 - perm - 1) as u32 + 1);
+                        add *= 10_i64.pow(2 * (self.w as i64 - perm) as u32);
                         score += add;
+                    }
+                    else {
+                        nonexist_cont += 1;
                     }
                 }
             }
         }
         // 盤面に存在しないコンテナの距離を考慮
+        // score += nonexist_cont * 1000000000;
         for i in 0..self.h {
             for j in self.incoming_cont_idx[i]..self.w {
                 let gx = self.conts[i][j] / self.h as i64;
@@ -766,14 +810,19 @@ impl Terminal {
 
                 let mut add = 0;
                 // x 方向の寄与
-                add += (i as i64 - gx).abs();
+                add += (i as i64 - gx).abs() * (i as i64 - gx).abs();
                 // y 方向の寄与
-                add += ( -(j as i64 - self.incoming_cont_idx[i] as i64 + 1) - (self.w - 1) as i64).abs();
+                add += ( -(j as i64 - self.incoming_cont_idx[i] as i64 + 1) - (self.w - 1) as i64).abs() * ( -(j as i64 - self.incoming_cont_idx[i] as i64 + 1) - (self.w - 1) as i64).abs();
                 // 倍率
-                add *= 10_i64.pow(2 * (self.w as i64 - perm - 1) as u32);
+                add *= 10_i64.pow(2 * (self.w as i64 - perm) as u32);
                 score += add;
             }
         }
+        // 同スコアの差別化として、全クレーンの y 座標を考慮（搬出口に近い方が良い）
+        for i in 0..USING_CRANE {
+            score += self.cranes[i].y as i64;
+        }
+
         score
     }
 }
@@ -1000,12 +1049,13 @@ impl BeamSearch {
                 &self.state.grid_crane,
                 &self.state.grid_cont,
                 &self.state.out_cont_idx,
+                self.state.out_cnt,
             ) {
                 continue;
             }
 
             // 盤面評価値を計算（差分計算で求める）
-            let mut _eval_score = self.state.score;
+            let mut score = self.state.score;
             if _op < 4 && self.state.cranes[self.state.turn % USING_CRANE].suspended {
                 let crane = &self.state.cranes[self.state.turn % USING_CRANE];
 
@@ -1021,15 +1071,33 @@ impl BeamSearch {
                 let gx = cont / self.state.h as i64;
                 let perm = cont % self.state.h as i64;
 
-                _eval_score -= ((px - gx).abs() + (py - (self.state.w - 1) as i64).abs()) * 10_i64.pow(2 * (self.state.w as i64 - perm - 1) as u32);
-                _eval_score += ((nx - gx).abs() + (ny - (self.state.w - 1) as i64).abs()) * 10_i64.pow(2 * (self.state.w as i64 - perm - 1) as u32);
+                // score -= ((px - gx).abs() + (py - (self.state.w - 1) as i64).abs()) * 10_i64.pow(2 * (self.state.w as i64 - perm) as u32);
+                // score += ((nx - gx).abs() + (ny - (self.state.w - 1) as i64).abs()) * 10_i64.pow(2 * (self.state.w as i64 - perm) as u32);
+
+                score -= ((px - gx).abs() + (py - (self.state.w - 1) as i64).abs()) * ((px - gx).abs() + (py - (self.state.w - 1) as i64).abs()) * 10_i64.pow(2 * (self.state.w as i64 - perm) as u32);
+                score += ((nx - gx).abs() + (ny - (self.state.w - 1) as i64).abs()) * ((nx - gx).abs() + (ny - (self.state.w - 1) as i64).abs()) * 10_i64.pow(2 * (self.state.w as i64 - perm) as u32);
+
+                // suspended && right && py == 0 の時は搬入口から出るコンテナによりそこの評価値変動も考慮
+                if py == 0 && _op == 0 {
+                    for i in self.state.incoming_cont_idx[px as usize]..self.state.w {
+                        let gx = self.state.conts[px as usize][i] / self.state.h as i64;
+                        let perm = self.state.conts[px as usize][i] % self.state.h as i64;
+
+                        let npy1 = -(i as i64 - self.state.incoming_cont_idx[px as usize] as i64 + 1);
+                        let npy2 = npy1 + 1;
+                        score -= ((px - gx).abs() + (npy1 - (self.state.w - 1) as i64).abs()) * ((px - gx).abs() + (npy1 - (self.state.w - 1) as i64).abs()) * 10_i64.pow(2 * (self.state.w as i64 - perm) as u32);
+                        score += ((nx - gx).abs() + (npy2 - (self.state.w - 1) as i64).abs()) * ((nx - gx).abs() + (npy2 - (self.state.w - 1) as i64).abs()) * 10_i64.pow(2 * (self.state.w as i64 - perm) as u32);
+                        // score -= ((px - gx).abs() + (npy1 - (self.state.w - 1) as i64).abs() * 2) * 10_i64.pow(2 * (self.state.w as i64 - perm) as u32);
+                        // score += ((nx - gx).abs() + (npy2 - (self.state.w - 1) as i64).abs() * 2) * 10_i64.pow(2 * (self.state.w as i64 - perm) as u32);
+                    }
+                }
             }
 
             cands.push(
                 Cand {
                     op: _op,
                     parent: idx,
-                    eval_score: _eval_score,
+                    eval_score: score,
                     hash: 0,
                 }
             );
@@ -1053,10 +1121,6 @@ fn main() {
 
     /*  ========== ビームサーチ解法 ========== */
     // BeamSearchの初期化
-    let mut initial_terminal = Terminal::new(&input);
-    initial_terminal.prepare_cont();
-    initial_terminal.incoming_cont_turn[0].clear();
-    initial_terminal.score = initial_terminal.evaluate();
     let initial_node: Node = {
         Node {
             op: !0,
@@ -1066,16 +1130,38 @@ fn main() {
             next: !0,
         }
     };
-    // USING_CRANE 以降は初手爆破
+    
+    let mut initial_terminal = Terminal::new(&input);
+    // let mut actions: String = "".to_string();
+    let mut actions: String = "RRRRRRRRRR".to_string();
+    for (i, action) in actions.chars().enumerate() {
+        initial_terminal.prepare_cont();
+        initial_terminal.cranes[i % 5].action(
+            OP.iter().position(|&x| x == action).unwrap(),
+            &mut initial_terminal.grid_crane,
+            &mut initial_terminal.grid_cont,
+            &mut initial_terminal.cont_suspended,
+            &mut initial_terminal.cont_grid,
+            &mut initial_terminal.crane_grid,
+        );
+    }
+    actions = "".to_string();
+    initial_terminal.prepare_cont();
+    initial_terminal.incoming_cont_turn[0].clear();
+    initial_terminal.score = initial_terminal.evaluate();
+
+    // USING_CRANE 以降は爆破
     for i in USING_CRANE..input.n {
         initial_terminal.cranes[i].explode(&mut initial_terminal.grid_cont, &mut initial_terminal.grid_crane);
     }
+
     let mut solver = BeamSearch::new(
         initial_terminal,
         initial_node,
     );
+    eprintln!("initial score: {}", solver.state.score);
 
-    for turn in 0..TURN/5 {
+    for turn in 0..TURN / 2 {
         eprintln!("turn: {}", turn);
 
         // 候補リストを生成
@@ -1094,6 +1180,7 @@ fn main() {
         eprintln!("candidates: {}\n", solver.leaf.len());
 
         // 最も良いスコアが 0 になった場合に終了
+        assert!(!_top_cands.is_empty());
         if _top_cands[0].eval_score == 0 {
             solver.cur_node = _top_cands[0].parent;
             break;
@@ -1101,22 +1188,11 @@ fn main() {
         
         // 候補を基に次の状態を更新
         solver.update(top_cands);
-
-        // if turn == 18 {
-        //     let path = solver.restore(solver.leaf[0]);
-        //     let mut actions: String = "".to_string();
-        //     eprintln!("path: {:?}", path);
-        //     for op in path {
-        //         actions.push(OP[op]);
-        //     }
-        //     write_output(actions);
-        // }
     }
 
     // 最終状態の復元
     solver.cur_node = solver.leaf[0];
     let final_path = solver.restore(solver.cur_node);
-    let mut actions: String = "".to_string();
     eprintln!("path: {:?}", final_path);
     for op in final_path {
         actions.push(OP[op]);
