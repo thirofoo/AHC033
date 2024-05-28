@@ -10,9 +10,11 @@
 # Usage
 
 ## Requirements
+
 Please install a compiler for Rust language (see https://www.rust-lang.org).
 If a compile error occurs, the compiler version may be old.
 You can update to the latest compiler by executing the following command.
+
 ```
 rustup update
 ```
@@ -21,30 +23,38 @@ For those who are not familiar with the Rust language environment, we have prepa
 The following examples assume that you will be working in the directory where this README is located.
 
 ## Input Generation
+
 The `in` directory contains pre-generated input files for seed=0-99.
 If you want more inputs, prepare `seeds.txt` which contains a list of random seeds (unsigned 64bit integers) and execute the following command.
+
 ```
 cargo run -r --bin gen seeds.txt
 ```
+
 This will output input files into `in` directory.
 When using the precompiled binary for Windows, execute the following command.
+
 ```
 ./gen.exe seeds.txt
 ```
-If you use the command prompt instead of WSL, use `gen.exe` instead of `./gen.exe`.
 
+If you use the command prompt instead of WSL, use `gen.exe` instead of `./gen.exe`.
 
 The following options are available.
 
 - `--dir=in2` Change the destination of the input files to the specified one instead of `in`.
 
 ## Visualization
+
 Let `in.txt` be an input file and `out.txt` be an output file.
 You can visualize the output by executing the following command.
+
 ```
 cargo run -r --bin vis in.txt out.txt
 ```
+
 When using the precompiled binary for Windows,
+
 ```
 ./vis.exe in.txt out.txt
 ```
@@ -57,40 +67,51 @@ You can also use a [web visualizer](https://img.atcoder.jp/ahc033/ELSlXTEw.html?
 # 使い方
 
 ## 実行環境
-Rust言語のコンパイル環境が必要です。
+
+Rust 言語のコンパイル環境が必要です。
 https://www.rust-lang.org/ja を参考に各自インストールして下さい。
 コンパイルエラーになった場合、コンパイラのバージョンが古い可能性があります。
 以下のコマンド実行することで最新のコンパイラに更新が可能です。
+
 ```
 rustup update
 ```
 
-Rust言語の環境構築が面倒な方向けに、[Windows用のコンパイル済みバイナリ](https://img.atcoder.jp/ahc033/ELSlXTEw_windows.zip)も用意してあります。
-以下の実行例では、このREADMEが置かれているディレクトリに移動して作業することを想定しています。
+Rust 言語の環境構築が面倒な方向けに、[Windows 用のコンパイル済みバイナリ](https://img.atcoder.jp/ahc033/ELSlXTEw_windows.zip)も用意してあります。
+以下の実行例では、この README が置かれているディレクトリに移動して作業することを想定しています。
 
 ## 入力生成
+
 `in` ディレクトリに予め生成された seed=0~99 に対する入力ファイルが置かれています。
-より多くの入力が欲しい場合は、`seeds.txt` に欲しい入力ファイルの数だけ乱数seed値(符号なし64bit整数値)を記入し、以下のコマンドを実行します。
+より多くの入力が欲しい場合は、`seeds.txt` に欲しい入力ファイルの数だけ乱数 seed 値(符号なし 64bit 整数値)を記入し、以下のコマンドを実行します。
+
 ```
 cargo run -r --bin gen seeds.txt
 ```
+
 生成された入力ファイルは `in` ディレクトリに出力されます。
-Windows用のコンパイル済バイナリを使用する場合は以下のようにします。
+Windows 用のコンパイル済バイナリを使用する場合は以下のようにします。
+
 ```
 ./gen.exe seeds.txt
 ```
-WSLではなくコマンドプロンプトを使用する場合は `./gen.exe` ではなく `gen.exe` として下さい。
+
+WSL ではなくコマンドプロンプトを使用する場合は `./gen.exe` ではなく `gen.exe` として下さい。
 
 以下のオプションが使用可能です
 
 - `--dir=in2` 入力ファイルの出力先を `in` ではなく、指定されたものに変更
 
 ## ビジュアライザ
+
 入力ファイル名を`in.txt`、出力ファイル名を`out.txt`としたとき、以下のコマンドを実行します。
+
 ```
 cargo run -r --bin vis in.txt out.txt
 ```
-Windows用のコンパイル済バイナリを使用する場合は以下のようにします。
+
+Windows 用のコンパイル済バイナリを使用する場合は以下のようにします。
+
 ```
 ./vis.exe in.txt out.txt
 ```

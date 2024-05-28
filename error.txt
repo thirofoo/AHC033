@@ -1,0 +1,40 @@
+   Compiling AHC033 v0.1.0 (/home/hiroto/Proglam/C++/AtCoder/Contest/Heuristic/AHC033)
+warning: enum `Direction` is never used
+  --> src/main.rs:62:6
+   |
+62 | enum Direction {
+   |      ^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: field `hash` is never read
+   --> src/main.rs:757:5
+    |
+753 | struct Cand {
+    |        ---- field in this struct
+...
+757 |     hash: u64,
+    |     ^^^^
+    |
+    = note: `Cand` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: method `raw_score` is never used
+   --> src/main.rs:760:8
+    |
+759 | impl Cand {
+    | --------- method in this implementation
+760 |     fn raw_score(&self) -> i64 {
+    |        ^^^^^^^^^
+
+warning: method `dfs` is never used
+   --> src/main.rs:850:8
+    |
+793 | impl BeamSearch {
+    | --------------- method in this implementation
+...
+850 |     fn dfs(&mut self, cands: &mut Vec<Cand>, single: bool){
+    |        ^^^
+
+warning: `AHC033` (bin "AHC033") generated 4 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.18s
+     Running `target/debug/AHC033`
